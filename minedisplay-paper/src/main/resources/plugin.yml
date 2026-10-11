@@ -1,0 +1,24 @@
+name: MineDisplay
+version: '${version}'
+main: com.minedisplay.MineDisplayPlugin
+api-version: '26.2'
+description: 图片与视频展示（地图墙 / MineUI 图片 HUD / Fabric 高清屏幕）
+author: ubuntu
+commands:
+  minedisplay:
+    description: MineDisplay 主命令
+    usage: /minedisplay
+    aliases: [display]
+permissions:
+  minedisplay.admin:
+    description: 允许 MineDisplay 管理命令
+    default: op
+  minedisplay.control:
+    description: 允许 MineDisplay 播放控制
+    default: op
+  minedisplay.view:
+    description: 允许观看 MineDisplay 屏幕
+    default: true
+  minedisplay.hud:
+    description: 允许 MineDisplay 图片 HUD
+    default: true

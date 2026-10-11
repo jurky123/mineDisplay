@@ -1,0 +1,4 @@
+allprojects {
+    group = 'com.minedisplay'
+    version = providers.gradleProperty('minedisplay_version').get()
+}

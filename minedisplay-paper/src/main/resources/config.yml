@@ -1,0 +1,29 @@
+schema-version: 1
+# M1 只用本地导入目录；HTTPS 导入默认关闭（M2 才开放）。
+media:
+  max-source-mib: 32
+  max-image-pixels: 16777216
+  https-import-enabled: false
+  allowed-hosts: []
+  base-url: ""
+maps:
+  max-tiles-per-display: 16
+  max-total-tiles: 128
+  animated-enabled: false
+  animated-max-fps: 2
+view:
+  range-blocks: 48
+  max-visible-displays-per-player: 8
+playback:
+  pause-when-empty: false
+  sync-interval-ms: 2000
+client:
+  max-image-edge: 4096
+  texture-budget-mib: 128
+  disk-cache-mib: 512
+  max-downloads: 2
+  max-video-decoders: 2
+  max-video-width: 1280
+  max-video-height: 720
+  max-video-fps: 30
+  max-audible-videos: 1
