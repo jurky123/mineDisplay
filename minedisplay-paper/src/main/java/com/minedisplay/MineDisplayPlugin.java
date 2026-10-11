@@ -6,16 +6,20 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import com.minedisplay.browser.BrowserManager;
+
 /**
  * MineDisplay 主插件：管理视觉素材、屏幕及播放状态。
  *
- * <p>M1 只实现静态地图墙。MineUI / MineAudio 均为可选集成（当前版本未接线，
+ * <p>M1 静态地图墙 + M3 真浏览器屏幕（Paper 是唯一网络出口）。
+ * MineUI / MineAudio 均为可选集成（当前版本未接线，
  * 只保留包 {@code com.minedisplay.integration} 作后续扩展点）。
  */
 public final class MineDisplayPlugin extends JavaPlugin implements Listener {
 
     private MediaStore mediaStore;
     private DisplayManager displayManager;
+    private BrowserManager browserManager;
     private volatile boolean shuttingDown;
 
     public MediaStore media() {
@@ -24,6 +28,10 @@ public final class MineDisplayPlugin extends JavaPlugin implements Listener {
 
     public DisplayManager displays() {
         return displayManager;
+    }
+
+    public BrowserManager browser() {
+        return browserManager;
     }
 
     /** 插件正在停用：异步导入/渲染回调据此丢弃过期结果。 */
@@ -37,6 +45,13 @@ public final class MineDisplayPlugin extends JavaPlugin implements Listener {
         mediaStore = new MediaStore(this);
         displayManager = new DisplayManager(this);
         displayManager.start();
+        browserManager = new BrowserManager(this);
+        try {
+            browserManager.start();
+        } catch (Exception e) {
+            getLogger().warning("浏览器出口代理启动失败（浏览器屏不可用，地图墙不受影响）: " + e.getMessage());
+            browserManager = null;
+        }
         getServer().getPluginManager().registerEvents(this, this);
 
         DisplayCommand command = new DisplayCommand(this);
@@ -47,12 +62,17 @@ public final class MineDisplayPlugin extends JavaPlugin implements Listener {
         }
 
         getLogger().info("MineDisplay 已启用（" + displayManager.count() + " 个屏幕，"
-                + mediaStore.all().size() + " 个素材）");
+                + mediaStore.all().size() + " 个素材，"
+                + (browserManager == null ? "浏览器代理未启动" : browserManager.screenCount() + " 个浏览器屏") + "）");
     }
 
     @Override
     public void onDisable() {
         shuttingDown = true;
+        if (browserManager != null) {
+            browserManager.stop();
+            browserManager = null;
+        }
         if (displayManager != null) {
             displayManager.stop();
         }

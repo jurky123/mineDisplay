@@ -154,7 +154,8 @@ public final class MediaStore {
         return null;
     }
 
-    static String checkId(String id) {
+    /** ID 规则（browser 包共用）：小写字母/数字/下划线/短横线，1-32 字符。 */
+    public static String checkId(String id) {
         if (id == null || !id.matches("[a-z0-9_-]{1,32}")) {
             return "ID 只允许小写字母、数字、下划线、短横线（1-32 字符）";
         }

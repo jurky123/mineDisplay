@@ -1,5 +1,9 @@
 pluginManagement {
     repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -7,4 +11,6 @@ pluginManagement {
 
 rootProject.name = 'minedisplay'
 
+include 'minedisplay-protocol'
 include 'minedisplay-paper'
+include 'minedisplay-client'

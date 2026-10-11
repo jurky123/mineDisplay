@@ -19,8 +19,9 @@ import org.bukkit.entity.Player;
 public final class DisplayCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> ROOTS = List.of("media", "create", "set", "glow", "remove",
-            "list", "info", "status", "reload");
+            "list", "info", "status", "reload", "browser");
     private static final List<String> MEDIA_ACTIONS = List.of("import", "list", "info");
+    private static final List<String> BROWSER_ACTIONS = List.of("open", "close", "list", "allow", "unallow");
 
     private final MineDisplayPlugin plugin;
 
@@ -45,6 +46,7 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
             case "info" -> info(sender, args);
             case "status" -> status(sender);
             case "reload" -> reload(sender);
+            case "browser" -> browser(sender, args);
             default -> sendHelp(sender);
         }
         return true;
@@ -248,7 +250,11 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
         }
         sender.sendMessage("§6MineDisplay: " + plugin.displays().count() + " 个屏幕，"
                 + plugin.displays().totalTiles() + " 个 tiles，"
-                + plugin.media().all().size() + " 个素材");
+                + plugin.media().all().size() + " 个素材"
+                + (plugin.browser() == null ? "（浏览器代理未启动）"
+                        : "，" + plugin.browser().screenCount() + " 个浏览器屏，"
+                                + plugin.browser().sessionCount() + " 个代理会话，"
+                                + plugin.browser().protocol().browserCapableCount() + " 个浏览器客户端"));
     }
 
     private void reload(CommandSender sender) {
@@ -260,6 +266,79 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("§a配置已重载（运行中的屏幕保留）");
     }
 
+    // ---------- browser（真浏览器屏幕，Paper 是唯一出口） ----------
+
+    private void browser(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("minedisplay.admin")) {
+            sender.sendMessage("§c没有权限");
+            return;
+        }
+        if (plugin.browser() == null) {
+            sender.sendMessage("§c浏览器代理未启动（地图墙不受影响）");
+            return;
+        }
+        if (args.length < 2) {
+            sender.sendMessage("§e用法: /minedisplay browser <open|close|list|allow|unallow> ...");
+            return;
+        }
+        switch (args[1].toLowerCase(Locale.ROOT)) {
+            case "open" -> {
+                if (args.length < 4) {
+                    sender.sendMessage("§e用法: /minedisplay browser open <screen-id> <url> [标题]");
+                    return;
+                }
+                String title = args.length >= 5 ? args[4] : "";
+                String error = plugin.browser().open(args[2], args[3], title);
+                sender.sendMessage(error == null ? "§a浏览器屏已打开（客户端 Rinku 渲染）" : "§c" + error);
+            }
+            case "close" -> {
+                if (args.length < 3) {
+                    sender.sendMessage("§e用法: /minedisplay browser close <screen-id>");
+                    return;
+                }
+                String error = plugin.browser().close(args[2]);
+                sender.sendMessage(error == null ? "§a浏览器屏已关闭" : "§c" + error);
+            }
+            case "list" -> {
+                var all = plugin.browser().list();
+                if (all.isEmpty()) {
+                    sender.sendMessage("§7没有浏览器屏");
+                    return;
+                }
+                sender.sendMessage("§6浏览器屏（" + all.size() + "）:");
+                for (var screen : all) {
+                    sender.sendMessage("§7- " + screen.id() + " r" + screen.revision()
+                            + " " + hostOf(screen.url()));
+                }
+            }
+            case "allow" -> {
+                if (args.length < 3) {
+                    sender.sendMessage("§e用法: /minedisplay browser allow <host>（如 example.com）");
+                    return;
+                }
+                String error = plugin.browser().allow(args[2]);
+                sender.sendMessage(error == null ? "§a已加入白名单" : "§c" + error);
+            }
+            case "unallow" -> {
+                if (args.length < 3) {
+                    sender.sendMessage("§e用法: /minedisplay browser unallow <host>");
+                    return;
+                }
+                String error = plugin.browser().unallow(args[2]);
+                sender.sendMessage(error == null ? "§a已移出白名单" : "§c" + error);
+            }
+            default -> sender.sendMessage("§e用法: /minedisplay browser <open|close|list|allow|unallow> ...");
+        }
+    }
+
+    private static String hostOf(String url) {
+        try {
+            return new java.net.URI(url).getHost();
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6/minedisplay media import <id> <incoming-file> §7导入素材");
         sender.sendMessage("§6/minedisplay media list|info <id> §7查看素材");
@@ -267,6 +346,8 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("§6/minedisplay set <id> <media-id> §7绑定素材");
         sender.sendMessage("§6/minedisplay glow <id> §7转为发光画框");
         sender.sendMessage("§6/minedisplay remove|list|info|status §7管理屏幕");
+        sender.sendMessage("§6/minedisplay browser open <id> <url> [标题] §7打开真浏览器屏");
+        sender.sendMessage("§6/minedisplay browser close|list|allow|unallow §7管理浏览器屏与白名单");
     }
 
     @Override
@@ -276,6 +357,9 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("media")) {
             return MEDIA_ACTIONS.stream().filter(s -> s.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("browser")) {
+            return BROWSER_ACTIONS.stream().filter(s -> s.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
         }
         if (args.length == 2 && (args[0].equalsIgnoreCase("set") || args[0].equalsIgnoreCase("glow")
                 || args[0].equalsIgnoreCase("remove") || args[0].equalsIgnoreCase("info"))) {

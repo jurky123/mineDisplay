@@ -1,0 +1,64 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+base {
+    archivesName = 'minedisplay-client-26.2'
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "minedisplay-client" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    // Rinku 无 Maven 仓库发布，走本地文件依赖（tools/cache/rinku-*.jar，不进仓库）。
+    // 下载：见 tools/fetch_rinku.sh（Modrinth 官方发布，sha512 校验）。
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+
+    // Rinku（Chromium 浏览器库，LGPL-2.1）：外部依赖，不修改不内嵌源码；
+    // 缺失时客户端降级为地图封面。jar 由 tools/fetch_rinku.sh 拉取到 tools/cache。
+    // 编译期用 compileOnly files（沿 MineAudio 对 mineui-client-api 的做法），
+    // 运行时由玩家 mods 目录里的 rinku jar 提供（client kit 安装说明里写清）。
+    compileOnly files("${rootDir}/tools/cache/rinku-${rinku_version}.jar")
+
+    // 纯 Java 协议模块：编译期依赖，构建时内嵌进 mod jar
+    compileOnly project(':minedisplay-protocol')
+    compileOnly 'com.google.code.gson:gson:2.10.1'
+}
+
+processResources {
+    def props = [version: project.version]
+    inputs.properties props
+    filesMatching('fabric.mod.json') {
+        expand props
+    }
+}
+
+jar {
+    // 26.x 起 Minecraft 官方不再混淆，Loom 使用 no-remap 模式，jar 即最终产物
+    from { project(':minedisplay-protocol').sourceSets.main.output }
+    dependsOn ':minedisplay-protocol:classes'
+}

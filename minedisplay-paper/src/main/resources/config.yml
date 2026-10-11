@@ -27,3 +27,9 @@ client:
   max-video-height: 720
   max-video-fps: 30
   max-audible-videos: 1
+# 真浏览器屏幕（方向A）：Paper 是唯一网络出口。
+# 注意：8767 已被 MineAudio 本地曲库托管占用，默认用 8768。
+browser:
+  proxy-port: 8768
+  session-ttl-minutes: 30
+  allowed-hosts: []

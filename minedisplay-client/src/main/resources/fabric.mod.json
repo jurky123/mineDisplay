@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "minedisplay-client",
+  "version": "${version}",
+  "name": "MineDisplay Client",
+  "description": "MineDisplay 真浏览器屏幕客户端（Paper 服务端配套，26.2；需要 Rinku）",
+  "authors": [
+    "ubuntu"
+  ],
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.minedisplay.client.fabric.MineDisplayFabricClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  },
+  "recommends": {
+    "rinku": "*"
+  }
+}

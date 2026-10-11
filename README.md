@@ -1,15 +1,16 @@
 # MineDisplay
 
-> Minecraft Java 26.2 · Paper 插件 + 可选 Fabric 客户端 · **M1 已实现：原版静态地图墙**
+> Minecraft Java 26.2 · Paper 插件 + 可选 Fabric 客户端 · **M1 地图墙 + M3 真浏览器屏幕（MVP）**
 
 MineDisplay 让服务器展示图片与视频：世界里的画框、公告墙、电影院屏幕，以及类似侧边计分板的图片 HUD。
-原版玩家可以看地图拼接图片；安装客户端后可使用高清世界屏幕和视频。管理界面与图片 HUD 优先复用 MineUI。
+原版玩家可以看地图拼接图片；装了客户端（+Rinku）后世界里是真 Chromium 屏幕。管理界面与图片 HUD 优先复用 MineUI。
 
 ## 能力与阶段
 
 | 场景 | 原版客户端 | 增强客户端 | 计划阶段 |
 |---|---|---|---|
-| 墙面图片 / 画框 | 128×128 地图分块拼接，有限色板 | 高清纹理平面 | M1 / M3 |
+| 墙面图片 / 画框 | 128×128 地图分块拼接，有限色板 | 高清纹理平面（后续） | M1 / M3 |
+| 真浏览器屏幕 | 地图封面 + 聊天提示 | Rinku Chromium 世界屏（MVP：开屏/关屏/白名单/代理） | M3 |
 | 海报轮播 | 低频换图 | 高清换图 | M2 / M3 |
 | 侧边图片 HUD | 聊天/文字状态提示 | MineUI 图片 HUD | M2 |
 | 世界视频 | 默认展示封面；实验低帧率地图动画需另行开启 | 预处理视频、本地解码、同步播放 | M4 |
@@ -24,6 +25,7 @@ MineDisplay 让服务器展示图片与视频：世界里的画框、公告墙�
 - [总体设计](docs/DESIGN.md)：技术取舍、架构、素材、播放同步、协议、安全、配置与拟定 API。
 - [实施计划](docs/PLAN.md)：里程碑、交付物、验证门槛、待确认事项。
 - [操作规范](docs/OPERATIONS.md)：拟定命令、素材制作、部署、故障处理与交付方式。
+- [真浏览器屏幕](docs/BROWSER.md)：方向A方案（服务端唯一出口 + Rinku 客户端渲染）。
 
 ## 项目边界
 
@@ -36,11 +38,15 @@ PackHost 仅在需要预制资源包时通过现有部署流程使用，不代�
 ```bash
 ./gradlew build        # 构建 + 单测
 ./deploy.sh            # 部署到 /home/ubuntu/minecraft（默认只部署不重启）
+tools/fetch_rinku.sh   # 拉取 Rinku jar 到 tools/cache（不进仓库）
+tools/build_client_kit.sh  # 生成玩家客户端安装包（本插件 + Rinku）
 ```
 
 1. 把 PNG/JPEG 放到 `plugins/MineDisplay/media/incoming/`，游戏内 `/minedisplay media import <id> <文件>`。
 2. `/minedisplay create <id> <宽tiles> <高tiles> <media-id>` 后右键墙面左上角放置。
 3. `/minedisplay set <id> <media-id>` 换图（复用自身 map ID）；`/minedisplay glow <id>` 转发光画框。
+4. 真浏览器屏：`/minedisplay browser allow <host>` 加白名单 →
+   `/minedisplay browser open <id> <url>` 开屏（客户端需装 client kit，含 Rinku）。
 
 目标环境沿用相邻项目：Java 25、Paper 26.2（`26.2.build.124-stable`）、Fabric 26.2。
 独立仓库：[jurky123/mineDisplay](https://github.com/jurky123/mineDisplay)。

@@ -1,0 +1,311 @@
+package com.minedisplay.browser;
+
+import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.logging.Level;
+
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+
+import com.minedisplay.MediaStore;
+import com.minedisplay.MineDisplayPlugin;
+import com.minedisplay.protocol.Packets;
+import com.minedisplay.protocol.ProtocolCodec;
+import com.minedisplay.protocol.ProtocolException;
+import com.minedisplay.protocol.ProxyUrl;
+
+/**
+ * 浏览器屏幕管理：会话/白名单/令牌，Paper 是唯一出口。
+ *
+ * <p>MVP 只做“管理员开屏 → 客户端 Rinku 渲染代理 URL”：
+ * 白名单校验 → 短期令牌 → 代理转发 → UPSERT 下发。
+ * 输入回传（click/wheel/key）先收齐校验，MVP 转述为 INPUT（客户端再注入 CEF）。
+ */
+public final class BrowserManager {
+
+    /** 屏幕会话（内存 + displays.yml 持久化定义，不持久化令牌）。 */
+    public record BrowserScreen(UUID uuid, String id, String url, String title,
+                                String world, double x, double y, double z,
+                                String facing, double width, double height,
+                                int revision, String token) {
+    }
+
+    private final MineDisplayPlugin plugin;
+    private final BrowserProtocol protocol;
+    private ProxyServer proxy;
+    private final Map<String, BrowserScreen> screens = new HashMap<>();
+    private long inputSequence;
+
+    public BrowserManager(MineDisplayPlugin plugin) {
+        this.plugin = plugin;
+        this.protocol = new BrowserProtocol(plugin, this);
+    }
+
+    public void start() throws IOException {
+        this.proxy = new ProxyServer(plugin);
+        proxy.start();
+        protocol.register();
+        load();
+    }
+
+    public void stop() {
+        protocol.unregister();
+        save();
+        if (proxy != null) {
+            proxy.stop();
+            proxy = null;
+        }
+        screens.clear();
+    }
+
+    public int proxyPort() {
+        return proxy == null ? -1 : proxy.port();
+    }
+
+    public int screenCount() {
+        return screens.size();
+    }
+
+    public int sessionCount() {
+        return proxy == null ? 0 : proxy.sessionCount();
+    }
+
+    public BrowserProtocol protocol() {
+        return protocol;
+    }
+
+    public List<BrowserScreen> list() {
+        List<BrowserScreen> out = new ArrayList<>(screens.values());
+        out.sort((a, b) -> a.id().compareTo(b.id()));
+        return out;
+    }
+
+    public BrowserScreen find(String id) {
+        return id == null ? null : screens.get(id.toLowerCase(Locale.ROOT));
+    }
+
+    // ---------- 开屏 / 关屏 ----------
+
+    /**
+     * 管理员开屏：校验白名单 → 建会话 → 下发 UPSERT。
+     *
+     * @return 失败原因，成功返回 null
+     */
+    public String open(String id, String url, String title) {
+        String idError = MediaStore.checkId(id);
+        if (idError != null) {
+            return idError;
+        }
+        List<String> allowedHosts = plugin.getConfig().getStringList("browser.allowed-hosts");
+        URI target;
+        try {
+            target = new URI(url);
+        } catch (Exception e) {
+            return "URL 非法";
+        }
+        if (!"https".equalsIgnoreCase(target.getScheme()) && !"http".equalsIgnoreCase(target.getScheme())) {
+            return "只允许 http/https";
+        }
+        try {
+            ProxyServer.checkTarget(target, allowedHosts);
+        } catch (IOException e) {
+            return "目标被拒绝（白名单/私网检查）: " + e.getMessage();
+        }
+        // 吊销旧令牌，签新令牌（单屏单令牌）。
+        BrowserScreen old = screens.get(id.toLowerCase(Locale.ROOT));
+        if (old != null) {
+            proxy.revokeScreen(old.id());
+        }
+        long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
+        String token = proxy.issue(id, url, ttlMs);
+        String proxyUrl = ProxyUrl.build(proxy.port(), token);
+        BrowserScreen screen = new BrowserScreen(
+                old == null ? UUID.randomUUID() : old.uuid(),
+                id, url, title == null ? "" : title,
+                old == null ? "" : old.world(),
+                old == null ? 0 : old.x(), old == null ? 0 : old.y(), old == null ? 0 : old.z(),
+                old == null ? "NORTH" : old.facing(),
+                old == null ? 3 : old.width(), old == null ? 2 : old.height(),
+                old == null ? 1 : old.revision() + 1, token);
+        screens.put(id.toLowerCase(Locale.ROOT), screen);
+        save();
+        // 审计：只记 host，不记 token。
+        plugin.getLogger().info("浏览器开屏 " + id + " -> " + target.getHost()
+                + "（revision " + screen.revision() + "）");
+        broadcastUpsert(screen, proxyUrl);
+        return null;
+    }
+
+    /** 关屏：吊销令牌 → 发 REMOVE → 删记录。 */
+    public String close(String id) {
+        BrowserScreen screen = screens.remove(id.toLowerCase(Locale.ROOT));
+        if (screen == null) {
+            return "没有该浏览器屏";
+        }
+        proxy.revokeScreen(screen.id());
+        save();
+        plugin.getLogger().info("浏览器关屏 " + id);
+        broadcastRemove(screen.id(), "closed");
+        return null;
+    }
+
+    /** 白名单管理。 */
+    public String allow(String host) {
+        if (host == null || host.isBlank() || host.contains("/") || host.contains(":")) {
+            return "host 非法（只要域名，如 example.com）";
+        }
+        List<String> hosts = new ArrayList<>(plugin.getConfig().getStringList("browser.allowed-hosts"));
+        String lower = host.toLowerCase(Locale.ROOT);
+        if (hosts.contains(lower)) {
+            return "已在白名单";
+        }
+        hosts.add(lower);
+        plugin.getConfig().set("browser.allowed-hosts", hosts);
+        plugin.saveConfig();
+        return null;
+    }
+
+    public String unallow(String host) {
+        List<String> hosts = new ArrayList<>(plugin.getConfig().getStringList("browser.allowed-hosts"));
+        if (!hosts.remove(host.toLowerCase(Locale.ROOT))) {
+            return "不在白名单";
+        }
+        plugin.getConfig().set("browser.allowed-hosts", hosts);
+        plugin.saveConfig();
+        return null;
+    }
+
+    // ---------- 下发 ----------
+
+    private void broadcastUpsert(BrowserScreen screen, String proxyUrl) {
+        Packets.Upsert upsert = new Packets.Upsert(screen.id(), screen.revision(), proxyUrl,
+                screen.title(), screen.world(), screen.x(), screen.y(), screen.z(),
+                screen.facing(), screen.width(), screen.height());
+        try {
+            ProtocolCodec.validateUpsert(upsert);
+        } catch (ProtocolException e) {
+            plugin.getLogger().log(Level.WARNING, "UPSERT 自检失败: " + screen.id(), e);
+            return;
+        }
+        protocol.broadcastUpsert(screen, upsert);
+    }
+
+    private void broadcastRemove(String screenId, String reason) {
+        protocol.broadcastRemove(screenId, reason);
+    }
+
+    /** 玩家进入/重登：补发其可见屏幕快照（MVP 全量，后续按权限/范围过滤）。 */
+    public void sendSnapshot(Player player) {
+        for (BrowserScreen screen : screens.values()) {
+            String proxyUrl = ProxyUrl.build(proxy.port(), screen.token());
+            // TTL 过期则跳过（open 时重签）。
+            protocol.sendUpsert(player, screen,
+                    new Packets.Upsert(screen.id(), screen.revision(), proxyUrl,
+                            screen.title(), screen.world(), screen.x(), screen.y(), screen.z(),
+                            screen.facing(), screen.width(), screen.height()));
+        }
+    }
+
+    // ---------- 输入回传 ----------
+
+    /** 客户端 ACTION：只引用 screenId，服务端重校验后转述为 INPUT。 */
+    public void onAction(Player player, Packets.Action action) {
+        BrowserScreen screen = screens.get(action.screenId().toLowerCase(Locale.ROOT));
+        if (screen == null) {
+            return;
+        }
+        switch (action.kind()) {
+            case "ready", "error" -> {
+                plugin.getLogger().info("浏览器屏 " + screen.id() + " 客户端" + action.kind()
+                        + (action.message() == null ? "" : "：" + action.message())
+                        + "（玩家 " + player.getName() + "）");
+            }
+            case "click", "wheel", "key" -> {
+                // MVP：距离/世界校验从简——只要求玩家在线且屏存在；
+                // 真射线/朝向校验在世界 quad 落定后补（Client 骨架验收项）。
+                long sequence = ++inputSequence;
+                protocol.sendInput(player, screen,
+                        new Packets.Input(screen.id(), action.kind(), action.x(), action.y(),
+                                action.delta(), action.keyCode(), sequence));
+            }
+            default -> {
+                // 未知 kind 忽略
+            }
+        }
+    }
+
+    // ---------- 持久化（只存定义，不存令牌；重启后重签） ----------
+
+    private void save() {
+        var config = new org.bukkit.configuration.file.YamlConfiguration();
+        config.set("schema-version", 1);
+        for (BrowserScreen screen : screens.values()) {
+            String base = "browser-screens." + screen.id().toLowerCase(Locale.ROOT);
+            config.set(base + ".uuid", screen.uuid().toString());
+            config.set(base + ".id", screen.id());
+            config.set(base + ".url", screen.url());
+            config.set(base + ".title", screen.title());
+        }
+        try {
+            File file = new File(plugin.getDataFolder(), "browser.yml");
+            File tmp = new File(plugin.getDataFolder(), "browser.yml.tmp");
+            config.save(tmp);
+            java.nio.file.Files.move(tmp.toPath(), file.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "保存浏览器屏定义失败", e);
+        }
+    }
+
+    private void load() {
+        File file = new File(plugin.getDataFolder(), "browser.yml");
+        if (!file.isFile()) {
+            return;
+        }
+        var config = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(file);
+        var section = config.getConfigurationSection("browser-screens");
+        if (section == null) {
+            return;
+        }
+        // 重启后重签令牌：定义恢复，UPSERT 等玩家进入时补发。
+        for (String idKey : section.getKeys(false)) {
+            var entry = section.getConfigurationSection(idKey);
+            if (entry == null) {
+                continue;
+            }
+            try {
+                UUID uuid = UUID.fromString(entry.getString("uuid", ""));
+                String url = entry.getString("url", "");
+                List<String> allowedHosts = plugin.getConfig().getStringList("browser.allowed-hosts");
+                try {
+                    ProxyServer.checkTarget(new URI(url), allowedHosts);
+                } catch (Exception e) {
+                    plugin.getLogger().warning("跳过白名单外的浏览器屏: " + idKey);
+                    continue;
+                }
+                long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
+                String token = proxy.issue(idKey, url, ttlMs);
+                screens.put(idKey.toLowerCase(Locale.ROOT), new BrowserScreen(uuid, entry.getString("id", idKey),
+                        url, entry.getString("title", ""), "", 0, 0, 0, "NORTH", 3, 2, 1, token));
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.WARNING, "跳过损坏的浏览器屏记录: " + idKey, e);
+            }
+        }
+        if (!screens.isEmpty()) {
+            plugin.getLogger().info("恢复 " + screens.size() + " 个浏览器屏定义（令牌已重签）");
+        }
+    }
+
+    /** 退出时清注册表（保留方法供插件层统一调用）。 */
+    void onQuit(Player player) {
+        protocol.remove(player);
+    }
+}
