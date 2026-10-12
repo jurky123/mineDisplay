@@ -41,4 +41,8 @@ browser:
   # 导航白名单（打开/跳转的目标站；子域自动匹配）。
   # 页面子资源（脚本/样式/图片/CDN）不受白名单限制但只允许公网地址；
   # 私网/回环地址永远被拦（防 SSRF）。
+  # whitelist-enabled=false 时导航也不限站点（门户 /screens 页可切换）。
+  whitelist-enabled: false
   allowed-hosts: []
+  # 本地控制 API（门户“显示屏”管理页用；只绑回环，Bearer token 见控制台日志）。
+  control-port: 8769

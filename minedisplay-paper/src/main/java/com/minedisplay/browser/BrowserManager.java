@@ -39,6 +39,7 @@ public final class BrowserManager {
     private final MineDisplayPlugin plugin;
     private final BrowserProtocol protocol;
     private ProxyServer proxy;
+    private ControlServer control;
     private final Map<String, BrowserScreen> screens = new HashMap<>();
     private long inputSequence;
 
@@ -52,11 +53,22 @@ public final class BrowserManager {
         proxy.start();
         protocol.register();
         load();
+        try {
+            this.control = new ControlServer(plugin, this);
+            control.start();
+        } catch (IOException e) {
+            plugin.getLogger().warning("控制 API 启动失败（门户管理页不可用）: " + e.getMessage());
+            control = null;
+        }
     }
 
     public void stop() {
         protocol.unregister();
         save();
+        if (control != null) {
+            control.stop();
+            control = null;
+        }
         if (proxy != null) {
             proxy.stop();
             proxy = null;
@@ -130,7 +142,12 @@ public final class BrowserManager {
             return "只允许 http/https";
         }
         try {
-            ProxyServer.checkTarget(target, allowedHosts);
+            if (whitelistEnabled()) {
+                ProxyServer.checkTarget(target, allowedHosts);
+            } else {
+                // 白名单关闭：仍拦私网/回环（防 SSRF）。
+                ProxyServer.requirePublicAddress(target.getHost());
+            }
         } catch (IOException e) {
             return "目标被拒绝（白名单/私网检查）: " + e.getMessage();
         }
@@ -217,6 +234,18 @@ public final class BrowserManager {
 
     private static String fmt(double v) {
         return String.format(Locale.ROOT, "%.2f", v);
+    }
+
+    /** 导航白名单开关（页面上也可切）。关闭=任意公网站点可打开/跳转（仍拦私网）。 */
+    public boolean whitelistEnabled() {
+        return plugin.getConfig().getBoolean("browser.whitelist-enabled", false);
+    }
+
+    public String setWhitelistEnabled(boolean enabled) {
+        plugin.getConfig().set("browser.whitelist-enabled", enabled);
+        plugin.saveConfig();
+        plugin.getLogger().info("浏览器导航白名单" + (enabled ? "已启用" : "已关闭"));
+        return null;
     }
 
     /** 白名单管理。 */
@@ -363,8 +392,17 @@ public final class BrowserManager {
                 try {
                     ProxyServer.checkTarget(new URI(url), allowedHosts);
                 } catch (Exception e) {
-                    plugin.getLogger().warning("跳过白名单外的浏览器屏: " + idKey);
-                    continue;
+                    if (whitelistEnabled()) {
+                        plugin.getLogger().warning("跳过白名单外的浏览器屏: " + idKey);
+                        continue;
+                    }
+                    // 白名单关闭：非白名单也恢复，只要目标不是私网地址。
+                    try {
+                        ProxyServer.requirePublicAddress(new URI(url).getHost());
+                    } catch (Exception private_) {
+                        plugin.getLogger().warning("跳过私网目标的浏览器屏: " + idKey);
+                        continue;
+                    }
                 }
                 long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
                 String token = proxy.issue(idKey, url, ttlMs);

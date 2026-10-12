@@ -225,11 +225,12 @@ public final class ProxyServer {
         // 允许任意公网 host——真实站点的 CDN 太多了，否则页面必缺资源。
         // 私网/回环/link-local 对每一跳都拦（防 SSRF），这条与 dest 无关。
         boolean navigation = isNavigationDest(exchange);
-        // 每跳重检：host 白名单（导航）+ DNS 私网拦截。
+        boolean whitelistEnabled = plugin.getConfig().getBoolean("browser.whitelist-enabled", false);
+        // 每跳重检：host 白名单（导航且启用时）+ DNS 私网拦截。
         URI current = target;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             String host = current.getHost();
-            if (host == null || (navigation && !ProxyUrl.hostAllowed(host, allowedHosts))) {
+            if (host == null || (navigation && whitelistEnabled && !ProxyUrl.hostAllowed(host, allowedHosts))) {
                 sendStatus(exchange, 403);
                 plugin.getLogger().warning("代理拒绝非白名单导航 host（屏 " + session.screenId() + "）");
                 return;
