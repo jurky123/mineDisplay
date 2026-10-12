@@ -149,13 +149,8 @@ public final class BrowserOverlayScreen extends Screen {
             return false;
         }
         int[] browser = toBrowser((int) event.x(), (int) event.y());
+        // 输入只走 ACTION：服务端校验后以 INPUT 回执注入 CEF（不做本地注入，避免双注入）。
         BrowserClient.get().action(screenId, "click", null, browser[0], browser[1], 0, event.button(), null);
-        // 本地即时注入，保证手感；服务端 INPUT 确认后幂等（MVP 直接注入一次）。
-        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
-        if (state != null && state.view() != null) {
-            state.view().mousePress(browser[0], browser[1], event.button());
-            state.view().mouseRelease(browser[0], browser[1], event.button());
-        }
         return true;
     }
 
@@ -169,10 +164,6 @@ public final class BrowserOverlayScreen extends Screen {
         }
         int[] browser = toBrowser((int) mouseX, (int) mouseY);
         BrowserClient.get().action(screenId, "wheel", null, browser[0], browser[1], scrollY, 0, null);
-        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
-        if (state != null && state.view() != null) {
-            state.view().mouseWheel(browser[0], browser[1], scrollY, 0);
-        }
         return true;
     }
 
@@ -191,10 +182,6 @@ public final class BrowserOverlayScreen extends Screen {
             return super.keyPressed(event);
         }
         BrowserClient.get().action(screenId, "key", null, 0, 0, 0, event.key(), null);
-        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
-        if (state != null && state.view() != null) {
-            state.view().keyPress(event.key(), event.scancode(), event.modifiers());
-        }
         return true;
     }
 
@@ -206,10 +193,8 @@ public final class BrowserOverlayScreen extends Screen {
         if (Character.isISOControl(event.codepoint())) {
             return false;
         }
-        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
-        if (state != null && state.view() != null) {
-            state.view().keyTyped((char) event.codepoint(), 0);
-        }
+        // 字符事件也要过服务端（kind=char，keyCode 位携带码点），由 INPUT 回执注入。
+        BrowserClient.get().action(screenId, "char", null, 0, 0, 0, event.codepoint(), null);
         return true;
     }
 

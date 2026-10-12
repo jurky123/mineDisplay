@@ -20,7 +20,6 @@ import net.minecraft.resources.Identifier;
 public final class BrowserOverlayScreens {
 
     private static BrowserOverlayScreen current;
-    private static String pendingOpen;
 
     private BrowserOverlayScreens() {
     }
@@ -30,11 +29,21 @@ public final class BrowserOverlayScreens {
                 (graphics, deltaTracker) -> renderCapsule(graphics, Minecraft.getInstance().font));
     }
 
-    /** 服务端 UPSERT 后调用：有屏即记住，HUD 胶囊可点开。 */
-    public static void noteScreen(String screenId) {
-        if (current == null && pendingOpen == null && BrowserClient.get().screens().size() == 1) {
-            // 唯一屏：HUD 提示一次即可，不自动弹屏（避免打断游戏）。
+    /** 服务端 UPSERT 后调用：新屏公告一次（不自动弹屏，避免打断游戏）。 */
+    public static void noteScreen(String screenId, boolean announce) {
+        if (!announce || current != null) {
+            return;
+        }
+        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
+        if (state == null) {
+            return;
+        }
+        if (state.ready()) {
             chat("§6[浏览器] §f收到浏览器屏 §e" + screenId + " §7（按 §eF8 §7查看）");
+        } else {
+            chat("§6[浏览器] §f浏览器屏 §e" + screenId + " §c暂不可用："
+                    + (state.error() == null ? "Rinku 不可用" : state.error())
+                    + " §7（按 §eF8 §7重试）");
         }
     }
 
@@ -51,18 +60,35 @@ public final class BrowserOverlayScreens {
             chat("§7[浏览器] 当前没有可看的屏幕");
             return;
         }
+        // 优先已就绪的屏；都待建时对第一个走重试。
+        for (String id : ids) {
+            BrowserClient.ScreenState state = BrowserClient.get().screens().get(id);
+            if (state != null && state.ready()) {
+                open(id);
+                return;
+            }
+        }
         open(ids.get(0));
     }
 
     public static void open(String screenId) {
-        BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
+        BrowserClient client = BrowserClient.get();
+        BrowserClient.ScreenState state = client.screens().get(screenId);
         if (state == null) {
             chat("§c[浏览器] 屏幕不存在: " + screenId);
             return;
         }
-        if (!BrowserClient.get().rinkuAvailable()) {
-            chat("§c[浏览器] 未安装 Rinku，只显示地图封面");
-            return;
+        if (!state.ready()) {
+            chat("§7[浏览器] 正在重试创建屏幕 " + screenId + " …");
+            String error = client.retry(screenId);
+            if (error != null) {
+                chat("§c[浏览器] 创建失败：" + error + " §7（修好后按 §eF8 §7重试）");
+                return;
+            }
+            state = client.screens().get(screenId);
+            if (state == null) {
+                return;
+            }
         }
         if (current != null) {
             BrowserOverlayScreen overlay = current;

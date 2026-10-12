@@ -25,17 +25,17 @@ class ProtocolCodecTest {
     }
 
     @Test
-    void upsertRequiresProxyUrl() {
-        // 外网 URL 直接拒绝：客户端永不直连外网。
-        Packets.Upsert bad = new Packets.Upsert("s1", 1, "https://example.com/", "t",
+    void upsertRequiresProxyShape() {
+        // 没有令牌路径的 URL 直接拒绝。
+        Packets.Upsert bare = new Packets.Upsert("s1", 1, "https://example.com/", "t",
                 "world", 0, 64, 0, "NORTH", 2, 1);
-        assertThrows(ProtocolException.class, () -> ProtocolCodec.validateUpsert(bad));
-        // 非 127.0.0.1 也拒绝。
-        Packets.Upsert lan = new Packets.Upsert("s1", 1, "http://192.168.1.1/display/abc", "t",
+        assertThrows(ProtocolException.class, () -> ProtocolCodec.validateUpsert(bare));
+        // 空令牌也拒绝。
+        Packets.Upsert emptyToken = new Packets.Upsert("s1", 1, "http://192.168.1.1/display/", "t",
                 "world", 0, 64, 0, "NORTH", 2, 1);
-        assertThrows(ProtocolException.class, () -> ProtocolCodec.validateUpsert(lan));
-        // 回环代理形状通过。
-        Packets.Upsert good = new Packets.Upsert("s1", 1, "http://127.0.0.1:8767/display/abc123", "t",
+        assertThrows(ProtocolException.class, () -> ProtocolCodec.validateUpsert(emptyToken));
+        // 代理形状通过（基址匹配由发送端配置/接收端 WELCOME 各自校验）。
+        Packets.Upsert good = new Packets.Upsert("s1", 1, "http://127.0.0.1:8767/display/abcdef1234", "t",
                 "world", 0, 64, 0, "NORTH", 2, 1);
         try {
             ProtocolCodec.validateUpsert(good);

@@ -73,8 +73,8 @@ public final class ProtocolCodec {
                 || upsert.screenId().length() > ProtocolLimits.MAX_ID_LENGTH) {
             throw new ProtocolException("UPSERT missing screenId");
         }
-        // 客户端只接受回环代理 URL，服务端只下发这个形状。
-        ProxyUrl.requireProxy(upsert.url(), 0);
+        // 只查形状（末段令牌）；基址匹配由发送端（配置）与接收端（WELCOME）各自校验。
+        ProxyUrl.validateShape(upsert.url());
     }
 
     public static void validateAction(Packets.Action action) throws ProtocolException {

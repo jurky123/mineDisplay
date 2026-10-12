@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 构建 MineDisplay 客户端安装包（只含本插件产物，前置 mod 由玩家自行安装）
+# 构建 MineDisplay 客户端安装包（只含本插件产物；前置 mod 首次安装时单独提供）
+# Rinku 是前置 mod：默认不打包，INCLUDE_PREREQ=1 才附带（仅首次安装用）。
 # 产物命名带版本号：tools/out/minedisplay-client-kit-26.2-<版本>.zip
 # 用法: tools/build_client_kit.sh [输出目录]
 set -euo pipefail
@@ -22,8 +23,10 @@ trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$STAGE/mods"
 cp "$MOD_JAR" "$STAGE/mods/"
-if [ -f "$RINKU_JAR" ]; then
+PREREQ_LINE="- mods/rinku-$RINKU_VERSION.jar  （本包未附带，需单独安装）"
+if [ "${INCLUDE_PREREQ:-0}" = "1" ] && [ -f "$RINKU_JAR" ]; then
     cp "$RINKU_JAR" "$STAGE/mods/"
+    PREREQ_LINE="- mods/rinku-$RINKU_VERSION.jar  Chromium 浏览器库（LGPL-2.1，已附带）"
 fi
 
 cat > "$STAGE/安装说明.txt" <<EOF
@@ -31,19 +34,25 @@ MineDisplay Client 安装说明（26.2 · v$VERSION）
 ==========================================
 包内容：
 - mods/minedisplay-client-26.2-$VERSION.jar  MineDisplay 真浏览器屏幕客户端
-- mods/rinku-$RINKU_VERSION.jar  Chromium 浏览器库（LGPL-2.1，Keksuccino 发布）
+$PREREQ_LINE
 
-前置（已安装可跳过，本包不再附带）：
+前置（已安装可跳过；本包默认不再附带）：
 - Fabric API
+- Rinku $RINKU_VERSION（Chromium 浏览器库）
 
-安装：
-1) 把 mods/ 里的 jar 放入 .minecraft/mods
-2) 首次启动会自动下载 Chromium 内核（约 100-200MB，需联网）
-3) 启动 Fabric 26.2 进服；服务端 browser 开屏后世界里即显示网页
+安装/升级：
+1) 删除 mods 里旧的 minedisplay-client jar，放入本包里的新 jar
+2) 必须重启游戏（Rinku 内核下载与初始化只在启动时进行；
+   之前下载失败过的话，重启后才会重试）
+3) 首次启动会自动从 https://zkun.art/rinku-jcef 下载 Chromium 内核
+   （约 180MB）——本 mod 启动前会自动写好 config/rinku/rinku.properties
+   的镜像配置，无需手动改
+4) 排障：可删掉 .minecraft/rinku-libraries/.staging 残留后再启动
 
 说明：
+- 客户端只接受服务端下发的代理地址（http://zkun.art:8768/display/<令牌>），
+  目标站内容由服务端代理取回。
 - 未安装 Rinku 时自动降级为地图封面，不影响游戏。
-- 本客户端只渲染服务端下发的回环代理地址，永不直连外网。
 EOF
 
 KIT_ZIP="$OUT_DIR/minedisplay-client-kit-26.2-$VERSION.zip"

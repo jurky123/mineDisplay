@@ -5,9 +5,11 @@
 
 ## 1. 一句话方案
 
-- Paper 是唯一出口：白名单校验 → 短期令牌 → 本地 HTTP 代理转发。
-- Fabric + Rinku（Chromium）只渲染服务端下发的 `http://127.0.0.1:端口/display/令牌`，
-  永不直连外网；点击/滚动/键盘回传服务端校验后转成 CEF 事件。
+- Paper 是唯一出口：白名单校验 → 短期令牌 → HTTP 代理转发。
+- Fabric + Rinku（Chromium）只渲染服务端下发代理基址拼接的屏 URL
+  （`<基址>/令牌`；默认回环 `http://127.0.0.1:端口/display`，公网玩家用
+  `browser.public-url` 下发如 `http://zkun.art:8768/display`）；
+  点击/滚动/键盘回传服务端校验后转成 CEF 事件。
 - 地图墙（M1）不动：无 mod 玩家继续看地图，原样降级。
 
 ## 2. 为什么是这个形状
@@ -27,11 +29,11 @@
         │                                      │
         ▼                                      ▼
 Paper BrowserManager ──UPSERT/REMOVE──▶ Fabric Client (Rinku)
-   │ 白名单 + 会话令牌                          │ 只连 127.0.0.1 代理 URL
+   │ 白名单 + 会话令牌                          │ 只打开下发基址的代理 URL
    │                                            │ 输入事件 → ACTION 回传
    ▼                                            ▼
 服务端 HTTP 代理 ──▶ 外网目标站          Paper 校验 → 下一屏/翻页/关屏
-（127.0.0.1:端口/display/令牌）
+（bind-address:端口/display/令牌）
 ```
 
 1. 管理员 `browser open <screen-id> <url>`：Paper 校验 host 白名单 → 建会话
@@ -45,8 +47,9 @@ Paper BrowserManager ──UPSERT/REMOVE──▶ Fabric Client (Rinku)
 
 ## 4. 安全边界（MVP 即有）
 
-- 客户端永不信任 URL：只接受 `http://127.0.0.1:<port>/display/<token>` 形状，
-  其他一律拒绝（防服务端被攻破后下发恶意外链）。
+- 客户端永不信任 URL：只接受「WELCOME 下发的代理基址 + `/令牌`」形状，
+  scheme/host/port/路径前缀全部钉死，其他一律拒绝
+  （防服务端被攻破后下发恶意外链）。
 - 服务端白名单：精确或子域匹配；DNS 每条 A/AAAA 过私网/回环/link-local；
   重定向每跳重检，最多 3 跳；只允许 GET/HEAD；响应上限 8 MiB；超时 10 秒。
 - 令牌：随机 128bit，内存保存（不进仓库不打日志），TTL 过期即废；
@@ -78,12 +81,43 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 
 - Paper 不依赖 Rinku；Client 编译期 `modImplementation rinku-fabric`，
   Rinku 缺失时降级（地图封面 + 提示）。
-- 代理端口默认 127.0.0.1:8768（8767 已被 MineAudio 本地曲库托管占用，
-  与 mineAgent :8766 也错开），可配，仅回环监听。
+- 代理端口默认 8768（8767 已被 MineAudio 本地曲库托管占用，与 mineAgent :8766
+  也错开）。`browser.bind-address` 默认 `127.0.0.1`（单机/开发）；
+  公网玩家场景改 `0.0.0.0` 并配 `browser.public-url`（如
+  `http://zkun.art:8768/display`），云防火墙放行对应端口（IPv4/IPv6 都放行，
+  避免 DNS 解析到 AAAA 时等待回退）。
 
 ## 7. MVP 验收
 
-- 白名单外 host 被拒；非 127.0.0.1 URL 客户端拒收；token 吊销后代理 404。
+- 白名单外 host 被拒；与下发基址不匹配的 URL 客户端拒收；token 吊销后代理 404。
 - 一块浏览器屏：打开→显示网页→点击翻页→关屏释放纹理（无泄漏）。
+- 公网玩家：客户端能从 `public-url` 基址取到内容（腾讯云放行 TCP 8768）。
+- Rinku 内核下载失败不丢屏：聊天给出原因，修好（镜像）后 F8 重试/重启游戏即恢复。
 - 无 mod 玩家：地图封面 + 聊天提示，不崩。
 - `./gradlew build` + 单测通过。
+
+## 8. 已知限制（MVP）
+
+- 代理只转换屏 URL 的首个文档；页面内的子资源与外链跳转（绝对 URL）
+  目前由 CEF 直接加载，尚不经过服务端代理，也不受白名单约束。
+  简单页面（如 example.com）可正常显示；重资源站点会缺图/缺样式。
+  下一步：用 CEF 请求拦截把所有子请求重写回代理路径（需评估 Rinku 暴露面）。
+- 输入回传 MVP 只做点击/滚轮/键盘；地址栏跳转（navigate）协议位已留，服务端未实现。
+- 屏幕几何/世界 quad 未落地：现在覆盖层（F8）先行，世界里摆屏后续做。
+
+## 9. 客户端前置：Rinku 与 JCEF 内核镜像
+
+- 客户端需要 Rinku（LGPL-2.1，外部依赖，不内嵌）；Rinku 首次启动会从 GitHub
+  下载 JCEF/Chromium 内核（约 180MB），国内网络常超时失败。
+- 服务端已托管镜像：mineAgent `https://zkun.art/rinku-jcef/<tag>/<asset>`
+  （与上游 release asset 同形状）。minedisplay-client 的 preLaunch 会在
+  游戏启动前把 `config/rinku/rinku.properties` 的 `download-mirror` 写为镜像、
+  policy 为 `PREFER_CONFIGURED`（先镜像、失败回退官方）；玩家自定义镜像不接管。
+- 手动兜底（旧版本/排障）：
+  1. 编辑 `config/rinku/rinku.properties`：
+     `download-mirror=https://zkun.art/rinku-jcef`、
+     `download-mirror-policy=PREFER_CONFIGURED`
+  2. 可删 `rinku-libraries/.staging` 残留后重启游戏（下载与初始化只在启动时做，
+     一次失败会封死本进程的重试，必须重启）。
+- Rinku 升级会导致 `<tag>` 变化：需要把新 tag 的全平台六件套重新同步到
+  `data/webui/rinku-jcef/<tag>/` 并校验 sha256（见 rinkujcef 运维备注）。

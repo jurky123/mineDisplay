@@ -22,8 +22,9 @@ import com.sun.net.httpserver.HttpServer;
 /**
  * 服务端出口代理 MVP：唯一外网出口。
  *
- * <p>只监听 127.0.0.1（默认 :8767，与 mineAgent :8766 错开）。客户端拿到的 URL
- * 形如 {@code http://127.0.0.1:8767/display/<token>}，代理按令牌找到目标 host，
+ * <p>监听地址由 {@code browser.bind-address} 配置：默认 {@code 127.0.0.1}
+ * （单机/回环模式）；公网玩家要在 {@code browser.public-url} 配公网基址并把
+ * 这里改成 {@code 0.0.0.0}（记得放行对应端口）。代理按令牌找到目标 host，
  * 校验白名单后转发。只允许 GET/HEAD，响应上限 8 MiB，超时 10 秒。
  *
  * <p>令牌随机 128bit、内存保存、TTL 过期即废；换 URL/关屏即吊销。
@@ -56,8 +57,15 @@ public final class ProxyServer {
     }
 
     public void start() throws IOException {
-        int configured = plugin.getConfig().getInt("browser.proxy-port", 8767);
-        server = HttpServer.create(new java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), configured), 0);
+        int configured = plugin.getConfig().getInt("browser.proxy-port", 8768);
+        String bind = plugin.getConfig().getString("browser.bind-address", "127.0.0.1");
+        if (bind == null || bind.isBlank()) {
+            bind = "127.0.0.1";
+        }
+        java.net.InetSocketAddress address = bind.equals("0.0.0.0") || bind.equals("::")
+                ? new java.net.InetSocketAddress(configured)
+                : new java.net.InetSocketAddress(bind, configured);
+        server = HttpServer.create(address, 0);
         server.createContext("/display/", this::handle);
         server.setExecutor(Executors.newFixedThreadPool(4, runnable -> {
             Thread thread = new Thread(runnable, "MineDisplay-Proxy");
@@ -66,7 +74,7 @@ public final class ProxyServer {
         }));
         server.start();
         this.port = server.getAddress().getPort();
-        plugin.getLogger().info("浏览器出口代理监听 127.0.0.1:" + port);
+        plugin.getLogger().info("浏览器出口代理监听 " + bind + ":" + port);
     }
 
     public void stop() {

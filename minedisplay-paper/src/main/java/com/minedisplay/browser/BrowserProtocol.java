@@ -20,6 +20,7 @@ import com.minedisplay.protocol.Packets;
 import com.minedisplay.protocol.ProtocolCodec;
 import com.minedisplay.protocol.ProtocolException;
 import com.minedisplay.protocol.ProtocolVersion;
+import com.minedisplay.protocol.ProxyUrl;
 
 /**
  * 浏览器协议服务：通道注册、握手、UPSERT/REMOVE 下发、ACTION 接收。
@@ -97,6 +98,9 @@ public final class BrowserProtocol {
 
     /** UPSERT 只发给握手过 browser 能力的玩家；其他人收 REMOVE（只显示地图封面）。 */
     public void broadcastUpsert(BrowserScreen screen, Packets.Upsert upsert) {
+        if (!validUpsert(upsert)) {
+            return;
+        }
         Envelope envelope = Envelope.screen(PacketType.UPSERT, screen.id(), screen.revision(),
                 ProtocolCodec.data(upsert));
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -120,13 +124,24 @@ public final class BrowserProtocol {
         if (connection == null || !connection.browserCapable()) {
             return;
         }
-        try {
-            ProtocolCodec.validateUpsert(upsert);
-        } catch (ProtocolException e) {
+        if (!validUpsert(upsert)) {
             return;
         }
         send(player, Envelope.screen(PacketType.UPSERT, screen.id(), screen.revision(),
                 ProtocolCodec.data(upsert)));
+    }
+
+    /** 形状 + 基址双重校验（编程错误/配置错误在这里兜底，绝不下发不匹配的 URL）。 */
+    private boolean validUpsert(Packets.Upsert upsert) {
+        try {
+            ProtocolCodec.validateUpsert(upsert);
+            ProxyUrl.requireProxyUrl(upsert.url(), manager.baseUrl());
+            return true;
+        } catch (ProtocolException e) {
+            plugin.getLogger().warning("浏览器 UPSERT 校验失败（" + upsert.screenId() + "）："
+                    + e.getMessage());
+            return false;
+        }
     }
 
     public void sendInput(Player player, BrowserScreen screen, Packets.Input input) {
@@ -176,7 +191,7 @@ public final class BrowserProtocol {
         connections.put(player.getUniqueId(),
                 new Connection(hello.modVersion(), capable, System.currentTimeMillis()));
         Packets.Welcome welcome = new Packets.Welcome(plugin.getDescription().getVersion(),
-                manager.proxyPort(), 30_000);
+                manager.proxyPort(), manager.baseUrl(), 30_000);
         send(player, Envelope.of(PacketType.WELCOME, ProtocolCodec.data(welcome)));
         if (capable) {
             manager.sendSnapshot(player);

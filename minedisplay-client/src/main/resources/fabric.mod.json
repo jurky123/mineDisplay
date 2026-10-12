@@ -12,6 +12,9 @@
   "entrypoints": {
     "client": [
       "com.minedisplay.client.fabric.MineDisplayFabricClient"
+    ],
+    "preLaunch": [
+      "com.minedisplay.client.fabric.MineDisplayPreLaunch"
     ]
   },
   "depends": {

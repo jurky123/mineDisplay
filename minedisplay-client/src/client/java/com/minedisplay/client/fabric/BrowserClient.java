@@ -17,14 +17,20 @@ import net.minecraft.client.Minecraft;
 /**
  * 浏览器协议客户端：握手、UPSERT/REMOVE 接收、ACTION 回传。
  *
- * <p>安全铁律：只接受 {@code http://127.0.0.1:<port>/display/<token>} 形状的 URL，
- * 其他一律拒绝并上报（防服务端被攻破后下发恶意外链）。
+ * <p>安全铁律：只接受 WELCOME 下发基址（如 {@code http://zkun.art:8768/display}
+ * 或回环模式）拼接的 {@code <基址>/<token>} 形状 URL，其他一律拒绝并上报
+ * （防服务端被攻破后下发恶意外链）。
+ *
+ * <p>Rinku 不可用时屏不丢弃：保留待建状态（error 文案），F8 可重试创建。
  */
 public final class BrowserClient {
 
-    /** 屏幕状态（内存，不持久化）。 */
+    /** 屏幕状态（内存，不持久化）；view 为空时 error 说明原因（待建，可重试）。 */
     public record ScreenState(String screenId, int revision, String proxyUrl,
-                              String title, BrowserView view) {
+                              String title, BrowserView view, String error) {
+        public boolean ready() {
+            return view != null;
+        }
     }
 
     private static final BrowserClient INSTANCE = new BrowserClient();
@@ -35,6 +41,7 @@ public final class BrowserClient {
 
     private final Map<String, ScreenState> screens = new ConcurrentHashMap<>();
     private volatile int proxyPort;
+    private volatile String proxyBaseUrl = "";
     private volatile boolean rinkuAvailable;
 
     private BrowserClient() {
@@ -64,6 +71,7 @@ public final class BrowserClient {
         }
         screens.clear();
         proxyPort = 0;
+        proxyBaseUrl = "";
     }
 
     private static boolean detectRinku() {
@@ -73,6 +81,16 @@ public final class BrowserClient {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /** 当前代理基址：优先 WELCOME 下发值，缺省回退回环（老服务端兼容）。 */
+    private String base() {
+        String base = proxyBaseUrl;
+        if (base != null && !base.isBlank()) {
+            return base;
+        }
+        int port = proxyPort;
+        return port > 0 ? "http://127.0.0.1:" + port + "/display" : "";
     }
 
     // ---------- 接收 ----------
@@ -89,6 +107,7 @@ public final class BrowserClient {
                 try {
                     Packets.Welcome welcome = ProtocolCodec.data(envelope, Packets.Welcome.class);
                     this.proxyPort = welcome.proxyPort();
+                    this.proxyBaseUrl = welcome.proxyBaseUrl() == null ? "" : welcome.proxyBaseUrl();
                 } catch (ProtocolException ignored) {
                     // 坏包忽略
                 }
@@ -113,9 +132,14 @@ public final class BrowserClient {
         } catch (ProtocolException e) {
             return;
         }
-        // 双重校验：形状 + 端口（必须等于 WELCOME 下发的代理端口）。
+        // 双重校验：形状 + 基址（必须等于 WELCOME 下发的代理基址）。
+        String base = base();
+        if (base.isBlank()) {
+            action(upsert.screenId(), "error", null, 0, 0, 0, 0, "缺少代理基址（未握手）");
+            return;
+        }
         try {
-            ProxyUrl.requireProxy(upsert.url(), proxyPort > 0 ? proxyPort : 0);
+            ProxyUrl.requireProxyUrl(upsert.url(), base);
         } catch (ProtocolException e) {
             action(upsert.screenId(), "error", null, 0, 0, 0, 0, "拒绝非代理 URL");
             return;
@@ -127,15 +151,56 @@ public final class BrowserClient {
         if (old != null) {
             closeView(old);
         }
-        BrowserView view = BrowserView.open(upsert);
-        if (view == null) {
-            action(upsert.screenId(), "error", null, 0, 0, 0, 0, "Rinku 不可用");
-            return;
+        BrowserView view = null;
+        String error = null;
+        if (!rinkuAvailable) {
+            error = "未安装 Rinku mod（浏览器屏需要 Rinku；安装后重启游戏）";
+        } else {
+            try {
+                view = BrowserView.open(upsert.url());
+            } catch (BrowserView.OpenFailure failure) {
+                error = failure.getMessage();
+            }
         }
         screens.put(upsert.screenId(), new ScreenState(upsert.screenId(), envelope.revision(),
-                upsert.url(), upsert.title(), view));
-        BrowserOverlayScreens.noteScreen(upsert.screenId());
-        action(upsert.screenId(), "ready", null, 0, 0, 0, 0, null);
+                upsert.url(), upsert.title(), view, error));
+        BrowserOverlayScreens.noteScreen(upsert.screenId(), old == null);
+        action(upsert.screenId(), view != null ? "ready" : "error", null, 0, 0, 0, 0, error);
+    }
+
+    /**
+     * F8 重试：为待建屏重新尝试创建浏览器视图。
+     *
+     * @return 失败文案；成功返回 null（状态更新为 ready）
+     */
+    public String retry(String screenId) {
+        ScreenState old = screens.get(screenId);
+        if (old == null) {
+            return "屏幕不存在";
+        }
+        if (old.view() != null) {
+            return null;
+        }
+        if (!rinkuAvailable) {
+            // 重探测：换版本/补装后无需重启探测也无害
+            rinkuAvailable = detectRinku();
+            if (!rinkuAvailable) {
+                return "未安装 Rinku mod（浏览器屏需要 Rinku；安装后重启游戏）";
+            }
+        }
+        BrowserView view;
+        try {
+            view = BrowserView.open(old.proxyUrl());
+        } catch (BrowserView.OpenFailure failure) {
+            String error = failure.getMessage();
+            screens.put(screenId, new ScreenState(old.screenId(), old.revision(), old.proxyUrl(),
+                    old.title(), null, error));
+            return error;
+        }
+        screens.put(screenId, new ScreenState(old.screenId(), old.revision(), old.proxyUrl(),
+                old.title(), view, null));
+        action(screenId, "ready", null, 0, 0, 0, 0, null);
+        return null;
     }
 
     private void onRemove(Envelope envelope) {

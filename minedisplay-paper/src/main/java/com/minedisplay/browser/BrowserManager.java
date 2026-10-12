@@ -17,7 +17,6 @@ import org.bukkit.entity.Player;
 import com.minedisplay.MediaStore;
 import com.minedisplay.MineDisplayPlugin;
 import com.minedisplay.protocol.Packets;
-import com.minedisplay.protocol.ProtocolCodec;
 import com.minedisplay.protocol.ProtocolException;
 import com.minedisplay.protocol.ProxyUrl;
 
@@ -67,6 +66,23 @@ public final class BrowserManager {
 
     public int proxyPort() {
         return proxy == null ? -1 : proxy.port();
+    }
+
+    /**
+     * 下发给客户端的代理基址：配置 {@code browser.public-url} 优先（公网玩家场景），
+     * 否则回环 {@code http://127.0.0.1:<端口>/display}（单机/开发）。
+     * 客户端只接受「基址 + /令牌」形状的屏 URL。
+     */
+    public String baseUrl() {
+        String configured = plugin.getConfig().getString("browser.public-url", "");
+        if (configured != null && !configured.isBlank()) {
+            try {
+                return ProxyUrl.normalizeBase(configured);
+            } catch (ProtocolException e) {
+                plugin.getLogger().warning("browser.public-url 非法，回退回环代理：" + e.getMessage());
+            }
+        }
+        return "http://127.0.0.1:" + proxyPort() + "/display";
     }
 
     public int screenCount() {
@@ -125,7 +141,7 @@ public final class BrowserManager {
         }
         long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
         String token = proxy.issue(id, url, ttlMs);
-        String proxyUrl = ProxyUrl.build(proxy.port(), token);
+        String proxyUrl = ProxyUrl.buildFromBase(baseUrl(), token);
         BrowserScreen screen = new BrowserScreen(
                 old == null ? UUID.randomUUID() : old.uuid(),
                 id, url, title == null ? "" : title,
@@ -188,12 +204,7 @@ public final class BrowserManager {
         Packets.Upsert upsert = new Packets.Upsert(screen.id(), screen.revision(), proxyUrl,
                 screen.title(), screen.world(), screen.x(), screen.y(), screen.z(),
                 screen.facing(), screen.width(), screen.height());
-        try {
-            ProtocolCodec.validateUpsert(upsert);
-        } catch (ProtocolException e) {
-            plugin.getLogger().log(Level.WARNING, "UPSERT 自检失败: " + screen.id(), e);
-            return;
-        }
+        // 形状与基址校验在 BrowserProtocol（单一收口）。
         protocol.broadcastUpsert(screen, upsert);
     }
 
@@ -203,13 +214,19 @@ public final class BrowserManager {
 
     /** 玩家进入/重登：补发其可见屏幕快照（MVP 全量，后续按权限/范围过滤）。 */
     public void sendSnapshot(Player player) {
+        long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
         for (BrowserScreen screen : screens.values()) {
-            String proxyUrl = ProxyUrl.build(proxy.port(), screen.token());
-            // TTL 过期则跳过（open 时重签）。
-            protocol.sendUpsert(player, screen,
-                    new Packets.Upsert(screen.id(), screen.revision(), proxyUrl,
-                            screen.title(), screen.world(), screen.x(), screen.y(), screen.z(),
-                            screen.facing(), screen.width(), screen.height()));
+            // 每次快照重签新令牌：避免服务端长时间运行后旧令牌过期（客户端拿到就 404）。
+            String token = proxy.issue(screen.id(), screen.url(), ttlMs);
+            BrowserScreen refreshed = new BrowserScreen(screen.uuid(), screen.id(), screen.url(),
+                    screen.title(), screen.world(), screen.x(), screen.y(), screen.z(),
+                    screen.facing(), screen.width(), screen.height(), screen.revision(), token);
+            screens.put(screen.id().toLowerCase(Locale.ROOT), refreshed);
+            String proxyUrl = ProxyUrl.buildFromBase(baseUrl(), token);
+            protocol.sendUpsert(player, refreshed,
+                    new Packets.Upsert(refreshed.id(), refreshed.revision(), proxyUrl,
+                            refreshed.title(), refreshed.world(), refreshed.x(), refreshed.y(),
+                            refreshed.z(), refreshed.facing(), refreshed.width(), refreshed.height()));
         }
     }
 
@@ -227,7 +244,7 @@ public final class BrowserManager {
                         + (action.message() == null ? "" : "：" + action.message())
                         + "（玩家 " + player.getName() + "）");
             }
-            case "click", "wheel", "key" -> {
+            case "click", "wheel", "key", "char" -> {
                 // MVP：距离/世界校验从简——只要求玩家在线且屏存在；
                 // 真射线/朝向校验在世界 quad 落定后补（Client 骨架验收项）。
                 long sequence = ++inputSequence;

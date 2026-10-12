@@ -51,6 +51,19 @@ curl -s -F "file=@<versioned-zip>" https://temp.sh/upload
 
 当前没有 jar/zip，不上传文档冒充安装包。公开 README 不写服务器地址、账号、令牌或运行时路径细节。
 
+## M3 浏览器屏部署要点
+
+- 服务端：`browser.bind-address: 0.0.0.0` + `browser.public-url: http://<域名>:8768/display`；
+  云防火墙放行 TCP 8768（IPv4/IPv6 都放行）；`browser.allowed-hosts` 按站维护。
+- 客户端：client kit 只含本插件；Rinku（Chromium）为前置，首次安装时单独提供。
+- Rinku/JCEF 内核由 `https://zkun.art/rinku-jcef` 镜像分发（mineAgent `/rinku-jcef`），
+  mod 的 preLaunch 自动写 `config/rinku/rinku.properties` 镜像配置；
+  玩家自定义镜像不接管。
+- Rinku 升级：把新 `<tag>` 六平台包同步到 `data/webui/rinku-jcef/<tag>/` 并
+  `sha256sum -c` 校验；旧 tag 保留便于回滚。
+- 内核下载/初始化只在游戏启动时做，一次失败会封死该进程的重试；排障统一
+  「改镜像/清 `rinku-libraries/.staging` → 重启游戏」。
+
 ## 故障与回滚
 
 | 现象 | 排查顺序 |

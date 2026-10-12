@@ -15,10 +15,17 @@ public final class Packets {
             List<String> capabilities) {
     }
 
-    /** S→C 握手回执：代理端口与心跳间隔。 */
+    /**
+     * S→C 握手回执：代理端口、代理基址与心跳间隔。
+     *
+     * <p>proxyBaseUrl 是客户端唯一信任的屏 URL 前缀（如
+     * {@code http://zkun.art:8768/display}，回环模式为
+     * {@code http://127.0.0.1:8768/display}）；屏 URL 必须是基址 + {@code /<token>}。
+     */
     public record Welcome(
             String serverVersion,
             int proxyPort,
+            String proxyBaseUrl,
             int heartbeatIntervalMs) {
     }
 
@@ -45,7 +52,8 @@ public final class Packets {
 
     /**
      * C→S 动作：只引用 screenId，不带 URL。
-     * kind: ready / error / click / wheel / key / navigate(仅op管理员且服务端重校验)
+     * kind: ready / error / click / wheel / key / char（keyCode 位携带码点）/
+     * navigate(协议位已留，服务端未实现)
      */
     public record Action(
             String screenId,

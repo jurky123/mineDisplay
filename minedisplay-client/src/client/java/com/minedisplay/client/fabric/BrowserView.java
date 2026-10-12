@@ -9,10 +9,17 @@ import net.minecraft.resources.Identifier;
 /**
  * 浏览器视图：Rinku 实例的薄封装（直接依赖 Rinku 类，编译期可见）。
  *
- * <p>MVP 只做“打开代理 URL → 拿到纹理 ID → 关闭释放”。
- * Rinku 缺失（ClassNotFound）时 open() 返回 null，调用方降级为地图封面。
+ * <p>Rinku 缺失/初始化失败时 open() 抛 {@link OpenFailure}（带细分原因），
+ * 调用方保留屏状态（待建 + 错误文案），不再丢弃 UPSERT；F8 可重试。
  */
 public final class BrowserView {
+
+    /** 创建失败原因（给玩家看的文案）。 */
+    public static final class OpenFailure extends Exception {
+        public OpenFailure(String message) {
+            super(message);
+        }
+    }
 
     private final RinkuBrowser browser;
 
@@ -21,26 +28,30 @@ public final class BrowserView {
     }
 
     /**
-     * 打开代理 URL，失败返回 null。必须在渲染线程调用
+     * 打开代理 URL，失败抛 OpenFailure。必须在渲染线程调用
      *（Rinku.createBrowser 内部非渲染线程会 submit 回主线程再 join，
      * 但调用方仍保证渲染线程，避免死锁）。
      */
-    public static BrowserView open(Packets.Upsert upsert) {
+    public static BrowserView open(String url) throws OpenFailure {
         try {
-            if (!Rinku.isInitialized()) {
-                if (!Rinku.initialize()) {
-                    return null;
-                }
+            if (!Rinku.isInitialized() && !Rinku.initialize()) {
+                throw new OpenFailure("Rinku/CEF 初始化失败（JCEF 内核未就绪：多为下载失败，"
+                        + "检查网络/镜像配置后重启游戏）");
             }
             // 浏览器分辨率：MVP 固定 1280x720，后续按屏幕宽高比与服务端 width/height 派生。
-            RinkuBrowser browser = Rinku.createBrowser(upsert.url(), false, 1280, 720);
+            RinkuBrowser browser = Rinku.createBrowser(url, false, 1280, 720);
             if (browser == null) {
-                return null;
+                throw new OpenFailure("创建浏览器失败（Rinku 返回空）");
             }
             return new BrowserView(browser);
-        } catch (LinkageError | RuntimeException e) {
-            // Rinku 缺失或初始化失败：降级
-            return null;
+        } catch (LinkageError e) {
+            // Rinku 缺失：类链接失败（NoClassDefFoundError 等）
+            throw new OpenFailure("未安装 Rinku mod（缺类 " + e.getClass().getSimpleName() + "）");
+        } catch (OpenFailure e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new OpenFailure("创建浏览器异常：" + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : "（" + e.getMessage() + "）"));
         }
     }
 
@@ -122,7 +133,7 @@ public final class BrowserView {
         }
     }
 
-    /** 服务端确认后的输入转述 → CEF 事件（MVP：点击/滚轮/键盘）。 */
+    /** 服务端确认后的输入转述 → CEF 事件（MVP：点击/滚轮/键盘/字符）。 */
     public void applyInput(Packets.Input input) {
         switch (input.kind()) {
             case "click" -> {
@@ -131,6 +142,7 @@ public final class BrowserView {
             }
             case "wheel" -> mouseWheel((int) input.x(), (int) input.y(), input.delta(), 0);
             case "key" -> keyPress(input.keyCode(), 0L, 0);
+            case "char" -> keyTyped((char) input.keyCode(), 0);
             default -> {
                 // 未知输入忽略
             }

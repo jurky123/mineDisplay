@@ -31,5 +31,11 @@ client:
 # 注意：8767 已被 MineAudio 本地曲库托管占用，默认用 8768。
 browser:
   proxy-port: 8768
+  # 监听地址：127.0.0.1=只回环（单机/开发）；0.0.0.0=公网玩家可用（记得放行端口）。
+  bind-address: 127.0.0.1
+  # 下发给客户端的代理基址（客户端只接受「基址+/令牌」形状的屏 URL，其余一律拒绝）。
+  # 公网玩家场景示例：http://zkun.art:8768/display（需在云防火墙放行 TCP 8768，
+  # IPv4/IPv6 都放行避免解析到 AAAA 时等待回退）。
+  public-url: ""
   session-ttl-minutes: 30
   allowed-hosts: []
