@@ -214,6 +214,9 @@ public final class BrowserManager {
 
     /** 玩家进入/重登：补发其可见屏幕快照（MVP 全量，后续按权限/范围过滤）。 */
     public void sendSnapshot(Player player) {
+        // 先补发 WELCOME：不依赖 HELLO 应答那一次（可能因进服时序被丢），
+        // 保证每个快照前面都有基址下发。
+        protocol.sendWelcome(player);
         long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
         for (BrowserScreen screen : screens.values()) {
             // 每次快照重签新令牌：避免服务端长时间运行后旧令牌过期（客户端拿到就 404）。

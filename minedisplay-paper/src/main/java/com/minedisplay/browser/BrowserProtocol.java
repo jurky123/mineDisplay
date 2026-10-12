@@ -72,6 +72,19 @@ public final class BrowserProtocol {
         connections.remove(player.getUniqueId());
     }
 
+    /**
+     * 发送握手回执（WELCOME：代理端口 + 下发基址）。
+     *
+     * <p>除 HELLO 应答外，每次下发快照前也补发一遍：HELLO 可能早于玩家完全进服
+     * 被处理，首个 WELCOME 会因玩家未就绪被静默丢弃，导致随后的 UPSERT 在
+     * 客户端因「缺少代理基址」被拒。
+     */
+    void sendWelcome(Player player) {
+        Packets.Welcome welcome = new Packets.Welcome(plugin.getDescription().getVersion(),
+                manager.proxyPort(), manager.baseUrl(), 30_000);
+        send(player, Envelope.of(PacketType.WELCOME, ProtocolCodec.data(welcome)));
+    }
+
     /** 在线且握手过 browser 能力的玩家数（status 用）。 */
     public int browserCapableCount() {
         int count = 0;
@@ -86,7 +99,13 @@ public final class BrowserProtocol {
     // ---------- 发送 ----------
 
     public void send(Player player, Envelope envelope) {
-        if (player == null || !player.isOnline()) {
+        if (player == null) {
+            return;
+        }
+        if (!player.isOnline()) {
+            // 玩家未就绪（进服时序竞态）会静默丢包；记录以便排查。
+            plugin.getLogger().info("延迟协议包（玩家未就绪）：" + envelope.type()
+                    + " -> " + player.getName());
             return;
         }
         try {
@@ -190,9 +209,9 @@ public final class BrowserProtocol {
                 && hello.capabilities().contains(ProtocolVersion.CAPABILITY_BROWSER);
         connections.put(player.getUniqueId(),
                 new Connection(hello.modVersion(), capable, System.currentTimeMillis()));
-        Packets.Welcome welcome = new Packets.Welcome(plugin.getDescription().getVersion(),
-                manager.proxyPort(), manager.baseUrl(), 30_000);
-        send(player, Envelope.of(PacketType.WELCOME, ProtocolCodec.data(welcome)));
+        plugin.getLogger().info("浏览器握手 " + player.getName() + " mod=" + hello.modVersion()
+                + " 能力=" + (capable ? "browser" : "无"));
+        sendWelcome(player);
         if (capable) {
             manager.sendSnapshot(player);
         }
