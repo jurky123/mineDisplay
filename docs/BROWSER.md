@@ -119,7 +119,19 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 - 响应只透传 `Content-Type`（丢弃 CSP/CORS/Cookie/缓存头），
   页面不会因为 CSP 拒绝同源代理资源，也没有第三方 Cookie 可用。
 
-## 9. 已知限制（MVP）
+## 9. 网页管理页（Mine 门户 /screens）
+
+- MineDisplay 起一个本地控制 API：`127.0.0.1:8769`（`browser.control-port`），
+  Bearer 令牌自动生成在 `plugins/MineDisplay/control-token.txt`（0600）。
+  端点：`GET /status`、`POST /open|/close|/whitelist`（add/remove/enabled/presets）。
+- MineAgent 门户加 `/screens` 管理页：屏幕列表（含摆放状态）、开屏/换网址、关屏、
+  导航白名单开关 + 一键加入常用站；`/api/display/*` 转发到控制 API，
+  GET 任意登录用户、写操作限管理员。
+- 导航白名单可整体关闭（`browser.whitelist-enabled`，默认关）：关闭后任意公网站点
+  都能打开/跳转（内网地址仍永远被拦）；页面上的开关即时生效（动态读配置）。
+  子资源本来就不受白名单限制。
+
+## 10. 已知限制（MVP）
 
 - WebSocket/SSE 等长连接不走代理（CEF 直连目标站）；登录类站点不可用（无 Cookie）。
 - iframe 里跨站文档的“根相对路径”按主文档 origin 解析（边缘场景会取错）。
@@ -129,7 +141,7 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 - 每个浏览器能力客户端进服即创建全部屏的 CEF 实例（与距离无关），
   屏数量多时要改成按距离懒创建/释放。
 
-## 10. 客户端前置：Rinku 与 JCEF 内核镜像
+## 11. 客户端前置：Rinku 与 JCEF 内核镜像
 
 - 客户端需要 Rinku（LGPL-2.1，外部依赖，不内嵌）；Rinku 首次启动会从 GitHub
   下载 JCEF/Chromium 内核（约 180MB），国内网络常超时失败。

@@ -49,6 +49,8 @@ tools/build_client_kit.sh  # 生成玩家客户端安装包（只含本插件；
    `/minedisplay browser open <id> <url>` 开屏 →
    瞄准墙面执行 `/minedisplay browser place <id> [宽] [高]` 摆到世界里。
    世界中瞄准屏幕左/右键=网页点击，F8=操作层；页面子资源/外链都经服务端代理。
+   也可以在 Mine 门户 `/screens` 页图形化管理（开屏/换网址/关屏/白名单，
+   见 mineAgent README）。白名单可整体关闭（`browser.whitelist-enabled: false`）。
    （客户端需 client kit + Rinku；公网玩家需 `browser.public-url` 并把
    `browser.bind-address` 改 `0.0.0.0`，同时放行代理端口。）
 
