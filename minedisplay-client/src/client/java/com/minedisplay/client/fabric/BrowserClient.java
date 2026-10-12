@@ -58,6 +58,7 @@ public final class BrowserClient {
     }
 
     public void onDisconnect() {
+        BrowserOverlayScreens.closeAll();
         for (ScreenState state : screens.values()) {
             closeView(state);
         }
@@ -133,6 +134,7 @@ public final class BrowserClient {
         }
         screens.put(upsert.screenId(), new ScreenState(upsert.screenId(), envelope.revision(),
                 upsert.url(), upsert.title(), view));
+        BrowserOverlayScreens.noteScreen(upsert.screenId());
         action(upsert.screenId(), "ready", null, 0, 0, 0, 0, null);
     }
 
@@ -145,6 +147,7 @@ public final class BrowserClient {
         }
         ScreenState old = screens.remove(remove.screenId());
         if (old != null) {
+            BrowserOverlayScreens.closeScreen(remove.screenId());
             closeView(old);
         }
     }
