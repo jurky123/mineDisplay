@@ -272,8 +272,21 @@ public final class ProxyServer {
                 continue;
             }
             if (status < 200 || status >= 300) {
+                // 上游明确拒绝/异常：原样把状态码给客户端，附可读原因（不再一律 502，
+                // 否则 Cloudflare 的 403 会伪装成网关错误，看不出真实原因）。
                 connection.disconnect();
-                sendStatus(exchange, 502);
+                plugin.getLogger().info("代理上游返回 " + status + "（屏 " + session.screenId()
+                        + "，host " + current.getHost() + "）");
+                byte[] body = upstreamErrorPage(status, current).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
+                exchange.sendResponseHeaders(status, head ? -1 : body.length);
+                if (!head) {
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
+                }
                 return;
             }
             String contentType = connection.getHeaderField("Content-Type");
@@ -360,11 +373,50 @@ public final class ProxyServer {
     }
 
     private static void sendStatus(HttpExchange exchange, int status) throws IOException {
-        byte[] body = ("minedisplay proxy: " + status).getBytes(StandardCharsets.UTF_8);
+        String reason = switch (status) {
+            case 403 -> "目标不在导航白名单，或指向内网地址（被安全策略拒绝）。";
+            case 404 -> "屏幕令牌无效/过期，或资源路径不合法。";
+            case 405 -> "只允许 GET/HEAD。";
+            case 502 -> "取回失败：目标站连不上或超时。";
+            default -> "请求失败（" + status + "）。";
+        };
+        byte[] body = ("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
+                + "<body style=\"font:14px/1.6 system-ui,sans-serif;padding:28px;color:#333\">"
+                + "<h3 style=\"margin:0 0 8px\">无法显示此页面（" + status + "）</h3>"
+                + "<p style=\"color:#666\">" + reason + "</p></body></html>")
+                .getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
         exchange.sendResponseHeaders(status, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
         }
+    }
+
+    /** 上游返回非 2xx 时给浏览器看的说明页（区分常见拦截/异常原因）。 */
+    static String upstreamErrorPage(int status, URI url) {
+        String reason;
+        if (status == 401 || status == 403) {
+            reason = "目标站拦截了这次取回（常见：Cloudflare／反爬验证、需要登录）。"
+                    + "这类站点把非浏览器请求当作爬虫，本代理取不回内容。";
+        } else if (status == 404) {
+            reason = "目标站没有这个页面（404）。";
+        } else if (status == 429) {
+            reason = "被目标站限流（429），稍后再试。";
+        } else if (status >= 500) {
+            reason = "目标站服务异常（" + status + "）。";
+        } else {
+            reason = "目标站返回 " + status + "。";
+        }
+        return "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
+                + "<body style=\"font:14px/1.6 system-ui,sans-serif;padding:28px;color:#333\">"
+                + "<h3 style=\"margin:0 0 8px\">无法显示此页面（" + status + "）</h3>"
+                + "<p style=\"color:#666\">" + reason + "</p>"
+                + "<p style=\"color:#999;word-break:break-all\">" + escapeHtml(url.toASCIIString()) + "</p>"
+                + "</body></html>";
+    }
+
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
     /** 供单测：白名单 + 私网检查（不发请求）。 */
