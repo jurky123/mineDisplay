@@ -260,6 +260,11 @@ public final class ProxyServer {
             if (acceptEncoding != null && !acceptEncoding.isBlank()) {
                 connection.setRequestProperty("Accept-Encoding", acceptEncoding);
             }
+            // 透传 Range：视频/大文件靠分段请求（<video> 拖进度、YouTube 的 MSE 分片）。
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            if (range != null && !range.isBlank()) {
+                connection.setRequestProperty("Range", range);
+            }
             int status = connection.getResponseCode();
             if (status >= 300 && status < 400) {
                 String location = connection.getHeaderField("Location");
@@ -291,22 +296,32 @@ public final class ProxyServer {
             }
             String contentType = connection.getHeaderField("Content-Type");
             String contentEncoding = connection.getHeaderField("Content-Encoding");
+            String contentRange = connection.getHeaderField("Content-Range");
+            String acceptRanges = connection.getHeaderField("Accept-Ranges");
+            boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
             try {
-                try (InputStream in = connection.getInputStream()) {
-                    byte[] body = readLimited(in, MAX_BODY_BYTES);
-                    exchange.getResponseHeaders().set("Content-Type",
-                            contentType == null ? "application/octet-stream" : contentType);
-                    if (contentEncoding != null && !contentEncoding.isBlank()) {
-                        exchange.getResponseHeaders().set("Content-Encoding", contentEncoding);
-                    }
-                    // 告诉客户端最终取回的 URL（重定向后的），用于页面相对路径解析。
-                    exchange.getResponseHeaders().set("X-MineDisplay-Upstream", current.toASCIIString());
-                    boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
-                    exchange.sendResponseHeaders(200, head ? -1 : body.length);
-                    if (!head) {
-                        try (OutputStream out = exchange.getResponseBody()) {
-                            out.write(body);
-                        }
+                exchange.getResponseHeaders().set("Content-Type",
+                        contentType == null ? "application/octet-stream" : contentType);
+                if (contentEncoding != null && !contentEncoding.isBlank()) {
+                    exchange.getResponseHeaders().set("Content-Encoding", contentEncoding);
+                }
+                if (contentRange != null && !contentRange.isBlank()) {
+                    exchange.getResponseHeaders().set("Content-Range", contentRange);
+                }
+                if (acceptRanges != null && !acceptRanges.isBlank()) {
+                    exchange.getResponseHeaders().set("Accept-Ranges", acceptRanges);
+                }
+                // 告诉客户端最终取回的 URL（重定向后的），用于页面相对路径解析。
+                exchange.getResponseHeaders().set("X-MineDisplay-Upstream", current.toASCIIString());
+                if (head) {
+                    exchange.sendResponseHeaders(status, -1);
+                } else {
+                    // 流式回传（chunked）：视频/大图边取边发，首字节更早；
+                    // 上游是 206 时原样回 206（CEF 依赖它做分段播放）。
+                    exchange.sendResponseHeaders(status, 0);
+                    try (InputStream in = connection.getInputStream();
+                            OutputStream out = exchange.getResponseBody()) {
+                        streamLimited(in, out, MAX_BODY_BYTES);
                     }
                 }
             } catch (IOException e) {
@@ -356,19 +371,17 @@ public final class ProxyServer {
         }
     }
 
-    private static byte[] readLimited(InputStream in, long maxBytes) throws IOException {
-        try (in; java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            long total = 0;
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                total += read;
-                if (total > maxBytes) {
-                    throw new IOException("响应超过上限 " + maxBytes + "B");
-                }
-                out.write(buffer, 0, read);
+    /** 边读边写（流式回传）：字节数超上限即抛；响应头已发出时表现为截断。 */
+    private static void streamLimited(InputStream in, OutputStream out, long maxBytes) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = in.read(buffer)) != -1) {
+            total += read;
+            if (total > maxBytes) {
+                throw new IOException("响应超过上限 " + maxBytes + "B");
             }
-            return out.toByteArray();
+            out.write(buffer, 0, read);
         }
     }
 

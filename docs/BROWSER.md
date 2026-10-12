@@ -86,10 +86,14 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 - Paper 不依赖 Rinku；Client 编译期 `modImplementation rinku-fabric`，
   Rinku 缺失时降级（地图封面 + 提示）。
 - 代理端口默认 8768（8767 已被 MineAudio 本地曲库托管占用，与 mineAgent :8766
-  也错开）。`browser.bind-address` 默认 `127.0.0.1`（单机/开发）；
-  公网玩家场景改 `0.0.0.0` 并配 `browser.public-url`（如
-  `http://zkun.art:8768/display`），云防火墙放行对应端口（IPv4/IPv6 都放行，
-  避免 DNS 解析到 AAAA 时等待回退）。
+  也错开）。**线上形态（HTTPS）**：Paper 代理只绑 `127.0.0.1:8768`，
+  `browser.public-url: https://zkun.art/display`；mineAgent 反代
+  `/display/* → 本机 8768`，客户端拿到的屏地址走 443/HTTPS（内容与令牌
+  不出现在明文公网上，公网也不需要放行 8768）。
+  回退形态（明文）：`bind-address: 0.0.0.0` + `public-url: http://zkun.art:8768/display`
+  （只剩单机/开发用；无 TLS）。
+- 代理透传 `Range`/`206`/`Content-Range` 并流式回传（`<video>` 分段播放、
+  大文件首字节更快），`Accept-Encoding`/`Content-Encoding` 透传（跨境省流量）。
 
 ## 7. MVP 验收
 
@@ -138,6 +142,10 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 ## 10. 已知限制（MVP）
 
 - WebSocket/SSE 等长连接不走代理（CEF 直连目标站）；登录类站点不可用（无 Cookie）。
+- 视频：普通视频（非 DRM）具备播放条件（Range/206 + 流式代理 + 内核解码）；
+  但 JCEF 内核不带 **Widevine**（DRM 视频如 Netflix/YouTube 电影不可用），
+  H.264/AAC 支持取决于内核构建；YouTube 需要 HTTPS（已是线上形态）才有
+  完整能力（Service Worker 等安全上下文特性）。
 - 强反爬站点取不回：目标站按 TLS/请求特征识别非浏览器请求（如 chatgpt.com 被
   Cloudflare 直接 403 "Enable JavaScript"），或需要登录态。这类站会在屏上显示
   「无法显示此页面（403）…」的说明页（代理把上游状态码原样透传，不再一律 502）。
