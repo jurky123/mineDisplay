@@ -254,6 +254,16 @@ public final class BrowserClient {
         state.view().applyInput(input);
     }
 
+    /** 覆盖层关闭后把浏览器分辨率恢复到世界显示用的尺寸（指哪点哪的坐标映射依赖它）。 */
+    public void restoreResolution(String screenId) {
+        ScreenState state = screens.get(screenId);
+        if (state == null || state.view() == null) {
+            return;
+        }
+        int[] size = desiredResolution(state.width(), state.height());
+        state.view().resize(size[0], size[1]);
+    }
+
     /** 世界渲染用的期望分辨率：按屏幕宽高比给，无几何时 1280×720。 */
     static int[] desiredResolution(double width, double height) {
         if (width <= 0 || height <= 0) {

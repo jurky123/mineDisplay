@@ -50,15 +50,28 @@ public class MineDisplayFabricClient implements ClientModInitializer {
                 BrowserOverlayScreens.toggle();
             }
         });
-        // 右键瞄准世界里的屏幕：打开该屏的操作覆盖层（别的时候不拦截，不影响放方块）。
+        // 指哪点哪：瞄准世界里的屏幕时，左/右键直接变成网页点击（别的时候不拦截）。
+        // 打字/滚动/导航仍走 F8 覆盖层。
         ClientTickEvents.START_CLIENT_TICK.register(client -> {
             if (client.player == null || client.level == null || client.gui.screen() != null) {
                 return;
             }
-            String aimed = BrowserWorldRenderer.aimedScreenId(client, 8.0);
-            if (aimed != null && client.options.keyUse.consumeClick()) {
-                BrowserOverlayScreens.open(aimed);
+            BrowserWorldRenderer.Hit hit = BrowserWorldRenderer.hitScreen(client, 8.0);
+            if (hit == null) {
+                return;
             }
+            int button = client.options.keyAttack.consumeClick() ? 0
+                    : client.options.keyUse.consumeClick() ? 1 : -1;
+            if (button < 0) {
+                return;
+            }
+            BrowserClient.ScreenState state = BrowserClient.get().screens().get(hit.screenId());
+            if (state == null || state.view() == null) {
+                return;
+            }
+            int px = (int) Math.round(hit.u() * state.view().viewportWidth());
+            int py = (int) Math.round(hit.v() * state.view().viewportHeight());
+            BrowserClient.get().action(hit.screenId(), "click", null, px, py, 0, button, null);
         });
         // HUD 胶囊点击：无界面且点中胶囊时打开覆盖层（屏蔽后续传递）。
         // 沿 MineUI：HudElementRegistry 只画胶囊；点击走 handleInput 轮询太重，

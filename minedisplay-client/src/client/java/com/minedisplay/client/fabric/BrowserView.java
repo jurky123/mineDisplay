@@ -22,9 +22,19 @@ public final class BrowserView {
     }
 
     private final RinkuBrowser browser;
+    private int viewportWidth = 1280;
+    private int viewportHeight = 720;
 
     private BrowserView(RinkuBrowser browser) {
         this.browser = browser;
+    }
+
+    public int viewportWidth() {
+        return viewportWidth;
+    }
+
+    public int viewportHeight() {
+        return viewportHeight;
     }
 
     /**
@@ -41,12 +51,20 @@ public final class BrowserView {
                 throw new OpenFailure("Rinku/CEF 初始化失败（JCEF 内核未就绪：多为下载失败，"
                         + "检查网络/镜像配置后重启游戏）");
             }
-            RinkuBrowser browser = Rinku.createBrowser(url, false,
-                    Math.max(64, pixelWidth), Math.max(64, pixelHeight));
+            int width = Math.max(64, pixelWidth);
+            int height = Math.max(64, pixelHeight);
+            // 加载带尾斜杠：文档 URL 作为“目录”，相对路径的解析保持标准语义。
+            String loadUrl = url.endsWith("/") ? url : url + "/";
+            RinkuBrowser browser = Rinku.createBrowser(loadUrl, false, width, height);
             if (browser == null) {
                 throw new OpenFailure("创建浏览器失败（Rinku 返回空）");
             }
-            return new BrowserView(browser);
+            BrowserRequestInterceptor.install();
+            BrowserRequestInterceptor.register(browser, url);
+            BrowserView view = new BrowserView(browser);
+            view.viewportWidth = width;
+            view.viewportHeight = height;
+            return view;
         } catch (LinkageError e) {
             // Rinku 缺失：类链接失败（NoClassDefFoundError 等）
             throw new OpenFailure("未安装 Rinku mod（缺类 " + e.getClass().getSimpleName() + "）");
@@ -72,7 +90,9 @@ public final class BrowserView {
 
     public void resize(int width, int height) {
         try {
-            browser.resize(width, height);
+            viewportWidth = Math.max(64, width);
+            viewportHeight = Math.max(64, height);
+            browser.resize(viewportWidth, viewportHeight);
         } catch (RuntimeException ignored) {
             // 注入失败不扩散
         }
@@ -140,8 +160,10 @@ public final class BrowserView {
     public void applyInput(Packets.Input input) {
         switch (input.kind()) {
             case "click" -> {
-                mousePress((int) input.x(), (int) input.y(), 0);
-                mouseRelease((int) input.x(), (int) input.y(), 0);
+                // 先移指针再按：页面 hover 状态与命中坐标一致。
+                mouseMove((int) input.x(), (int) input.y());
+                mousePress((int) input.x(), (int) input.y(), input.keyCode());
+                mouseRelease((int) input.x(), (int) input.y(), input.keyCode());
             }
             case "wheel" -> mouseWheel((int) input.x(), (int) input.y(), input.delta(), 0);
             case "key" -> keyPress(input.keyCode(), 0L, 0);
@@ -153,6 +175,11 @@ public final class BrowserView {
     }
 
     public void close() {
+        try {
+            BrowserRequestInterceptor.unregister(browser);
+        } catch (Throwable ignored) {
+            // 忽略
+        }
         try {
             browser.close();
         } catch (RuntimeException ignored) {

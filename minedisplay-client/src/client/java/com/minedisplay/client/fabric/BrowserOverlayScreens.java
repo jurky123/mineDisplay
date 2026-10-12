@@ -47,7 +47,7 @@ public final class BrowserOverlayScreens {
         }
     }
 
-    /** F8：有屏则打开/切换覆盖层，无屏则提示。 */
+    /** F8：有屏则打开/切换覆盖层，无屏则提示；优先打开正瞄准的那块屏。 */
     public static void toggle() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.gui.screen() instanceof BrowserOverlayScreen overlay) {
@@ -58,6 +58,11 @@ public final class BrowserOverlayScreens {
         ids.sort(String::compareTo);
         if (ids.isEmpty()) {
             chat("§7[浏览器] 当前没有可看的屏幕");
+            return;
+        }
+        String aimed = BrowserWorldRenderer.aimedScreenId(minecraft, 8.0);
+        if (aimed != null && BrowserClient.get().screens().containsKey(aimed)) {
+            open(aimed);
             return;
         }
         // 优先已就绪的屏；都待建时对第一个走重试。
@@ -99,11 +104,12 @@ public final class BrowserOverlayScreens {
         Minecraft.getInstance().gui.setScreen(current);
     }
 
-    /** 覆盖层 Esc/关闭按钮回调：只清理引用。 */
+    /** 覆盖层 Esc/关闭按钮回调：清理引用，并把浏览器分辨率恢复成世界显示尺寸。 */
     static void closed(BrowserOverlayScreen screen) {
         if (current == screen) {
             current = null;
         }
+        BrowserClient.get().restoreResolution(screen.screenId());
     }
 
     /** 服务端 REMOVE/断线：关掉对应覆盖层。 */

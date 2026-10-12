@@ -37,4 +37,33 @@ class ProxyCheckTest {
         assertTrue(thrown instanceof java.io.IOException);
         assertEquals(1, 1);
     }
+
+    @Test
+    void decodeOriginAcceptsCleanOrigin() {
+        String key = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("https://example.com".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("https://example.com", ProxyServer.decodeOrigin(key));
+        // 带路径/查询/凭证的 origin 一律拒绝（镜像里只允许纯 origin）。
+        for (String bad : List.of("https://example.com/a", "https://example.com/?x=1",
+                "https://u@example.com", "ftp://example.com", "not-a-url")) {
+            String badKey = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(bad.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(null, ProxyServer.decodeOrigin(badKey), bad);
+        }
+        assertEquals(null, ProxyServer.decodeOrigin("%%%"));
+    }
+
+    @Test
+    void resolveTargetBuildsMirrorUrl() {
+        ProxyServer.ProxySession session = new ProxyServer.ProxySession("s1", "https://example.com/", 0);
+        // 首文档。
+        assertEquals("https://example.com/", ProxyServer.resolveTarget(session, "", null).toString());
+        // 镜像：origin + 路径 + 查询。
+        String key = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("https://cdn.example.net".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("https://cdn.example.net/lib/a.js?v=1",
+                ProxyServer.resolveTarget(session, key + "/lib/a.js", "v=1").toString());
+        // 非法 hostkey → null。
+        assertEquals(null, ProxyServer.resolveTarget(session, "bogus/xx", null));
+    }
 }

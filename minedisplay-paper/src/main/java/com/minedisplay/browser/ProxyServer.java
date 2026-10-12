@@ -113,9 +113,25 @@ public final class ProxyServer {
                 sendStatus(exchange, 405);
                 return;
             }
-            String path = exchange.getRequestURI().getPath();
-            String token = path.startsWith("/display/") ? path.substring("/display/".length()) : "";
-            if (token.isEmpty() || token.contains("/")) {
+            // 路径形状：/display/<token>（首文档）
+            //           /display/<token>/<hostkey>[/<path>]（镜像：hostkey = base64url(origin)）
+            String rawPath = exchange.getRequestURI().getRawPath();
+            if (rawPath == null || !rawPath.startsWith("/display/")) {
+                sendStatus(exchange, 404);
+                return;
+            }
+            String rest = rawPath.substring("/display/".length());
+            String token;
+            String tail;
+            int slash = rest.indexOf('/');
+            if (slash < 0) {
+                token = rest;
+                tail = "";
+            } else {
+                token = rest.substring(0, slash);
+                tail = rest.substring(slash + 1);
+            }
+            if (token.isEmpty()) {
                 sendStatus(exchange, 404);
                 return;
             }
@@ -125,7 +141,12 @@ public final class ProxyServer {
                 sendStatus(exchange, 404);
                 return;
             }
-            forward(exchange, session);
+            URI target = resolveTarget(session, tail, exchange.getRequestURI().getRawQuery());
+            if (target == null) {
+                sendStatus(exchange, 404);
+                return;
+            }
+            forward(exchange, session, target);
         } catch (Throwable t) {
             try {
                 sendStatus(exchange, 502);
@@ -137,22 +158,80 @@ public final class ProxyServer {
         }
     }
 
-    private void forward(HttpExchange exchange, ProxySession session) throws IOException {
-        List<String> allowedHosts = plugin.getConfig().getStringList("browser.allowed-hosts");
-        URI target;
-        try {
-            target = new URI(session.targetUrl());
-        } catch (Exception e) {
-            sendStatus(exchange, 502);
-            return;
+    /**
+     * 解析请求目标：空 tail = 屏的首文档（会话 targetUrl）；
+     * 否则 tail 形如 {@code <hostkey>[/<path>][?query]}，hostkey 必须解码成
+     * 一个纯 origin（scheme://host[:port]，无路径/查询/凭证）。
+     *
+     * @return 目标 URL；非法返回 null
+     */
+    static URI resolveTarget(ProxySession session, String tail, String rawQuery) {
+        if (tail.isEmpty()) {
+            try {
+                URI document = new URI(session.targetUrl());
+                if (rawQuery == null || rawQuery.isEmpty()) {
+                    return document;
+                }
+                return new URI(document.getScheme(), document.getAuthority(),
+                        document.getPath(), rawQuery, null);
+            } catch (Exception e) {
+                return null;
+            }
         }
-        // 每跳重检：host 白名单 + DNS 私网拦截。
+        int slash = tail.indexOf('/');
+        String hostKey = slash < 0 ? tail : tail.substring(0, slash);
+        String path = slash < 0 ? "" : tail.substring(slash + 1);
+        String origin = decodeOrigin(hostKey);
+        if (origin == null) {
+            return null;
+        }
+        try {
+            return new URI(origin + "/" + path + (rawQuery == null || rawQuery.isEmpty()
+                    ? "" : "?" + rawQuery));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** hostkey = base64url(origin)；只接受干净的 http/https origin。 */
+    static String decodeOrigin(String hostKey) {
+        try {
+            String value = new String(java.util.Base64.getUrlDecoder().decode(hostKey),
+                    StandardCharsets.UTF_8);
+            URI uri = new URI(value);
+            String scheme = uri.getScheme();
+            if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+                return null;
+            }
+            if (uri.getHost() == null || uri.getHost().isBlank()) {
+                return null;
+            }
+            String path = uri.getRawPath();
+            if (path != null && !path.isEmpty() && !"/".equals(path)) {
+                return null;
+            }
+            if (uri.getRawQuery() != null || uri.getRawFragment() != null || uri.getRawUserInfo() != null) {
+                return null;
+            }
+            return scheme.toLowerCase(java.util.Locale.ROOT) + "://" + uri.getRawAuthority();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void forward(HttpExchange exchange, ProxySession session, URI target) throws IOException {
+        List<String> allowedHosts = plugin.getConfig().getStringList("browser.allowed-hosts");
+        // 白名单只约束“导航目标”（文档/框架）；页面子资源（脚本/样式/图片/字体/XHR）
+        // 允许任意公网 host——真实站点的 CDN 太多了，否则页面必缺资源。
+        // 私网/回环/link-local 对每一跳都拦（防 SSRF），这条与 dest 无关。
+        boolean navigation = isNavigationDest(exchange);
+        // 每跳重检：host 白名单（导航）+ DNS 私网拦截。
         URI current = target;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             String host = current.getHost();
-            if (host == null || !ProxyUrl.hostAllowed(host, allowedHosts)) {
+            if (host == null || (navigation && !ProxyUrl.hostAllowed(host, allowedHosts))) {
                 sendStatus(exchange, 403);
-                plugin.getLogger().warning("代理拒绝非白名单 host（屏 " + session.screenId() + "）");
+                plugin.getLogger().warning("代理拒绝非白名单导航 host（屏 " + session.screenId() + "）");
                 return;
             }
             try {
@@ -167,7 +246,11 @@ public final class ProxyServer {
             connection.setReadTimeout(READ_TIMEOUT_MS);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod(exchange.getRequestMethod());
-            connection.setRequestProperty("User-Agent", "MineDisplay/1.0");
+            // 真实站点兼容：伪装成正常浏览器 UA（部分站点会按 UA 拦非浏览器请求）。
+            connection.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+                            + " Chrome/151.0.0.0 Safari/537.36 MineDisplay/1.0");
+            connection.setRequestProperty("Accept", "*/*");
             int status = connection.getResponseCode();
             if (status >= 300 && status < 400) {
                 String location = connection.getHeaderField("Location");
@@ -189,6 +272,8 @@ public final class ProxyServer {
                 byte[] body = readLimited(in, MAX_BODY_BYTES);
                 exchange.getResponseHeaders().set("Content-Type",
                         contentType == null ? "application/octet-stream" : contentType);
+                // 告诉客户端最终取回的 URL（重定向后的），用于页面相对路径解析。
+                exchange.getResponseHeaders().set("X-MineDisplay-Upstream", current.toASCIIString());
                 boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
                 exchange.sendResponseHeaders(200, head ? -1 : body.length);
                 if (!head) {
@@ -202,6 +287,19 @@ public final class ProxyServer {
             return;
         }
         sendStatus(exchange, 502);
+    }
+
+    /**
+     * 是否“导航请求”：Chromium 用 Sec-Fetch-Dest 标注（document/iframe）。
+     * 缺失时按导航处理（保守：要求白名单）。
+     */
+    static boolean isNavigationDest(HttpExchange exchange) {
+        String dest = exchange.getRequestHeaders().getFirst("Sec-Fetch-Dest");
+        if (dest == null || dest.isBlank()) {
+            return true;
+        }
+        String value = dest.trim().toLowerCase(java.util.Locale.ROOT);
+        return value.equals("document") || value.equals("iframe") || value.equals("frame");
     }
 
     /** DNS 每条 A/AAAA 过私网/回环/link-local/保留地址。 */

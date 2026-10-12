@@ -112,6 +112,50 @@ public final class BrowserWorldRenderer {
                 .setNormal(pose, nx, ny, nz);
     }
 
+    /** 精确命中结果：屏幕 id + 归一化坐标（左上 0,0；右下 1,1）。 */
+    public record Hit(String screenId, double u, double v) {
+    }
+
+    /**
+     * 指哪点哪：准星射线与屏幕平面精确求交（矩形边界内），取最近的一块屏。
+     *
+     * @return 命中（含 uv）；没瞄准返回 null
+     */
+    public static Hit hitScreen(Minecraft minecraft, double range) {
+        if (minecraft.player == null || minecraft.level == null) {
+            return null;
+        }
+        Vec3 from = minecraft.player.getEyePosition();
+        Vec3 dir = minecraft.player.getViewVector(1.0f).normalize();
+        String dimension = minecraft.level.dimension().identifier().toString();
+        Hit best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (ScreenState state : BrowserClient.get().screens().values()) {
+            if (!state.placed() || !dimension.equals(state.world())) {
+                continue;
+            }
+            Quad quad = Quad.of(state);
+            double denominator = dir.dot(quad.normal());
+            if (Math.abs(denominator) < 1.0e-6) {
+                continue; // 平行
+            }
+            double distance = quad.center().subtract(from).dot(quad.normal()) / denominator;
+            if (distance < 0 || distance > range || distance >= bestDistance) {
+                continue;
+            }
+            Vec3 point = from.add(dir.scale(distance));
+            Vec3 local = point.subtract(quad.center());
+            double u = local.dot(quad.right()) / Math.max(MIN_SIZE, quad.width()) + 0.5;
+            double v = 0.5 - local.dot(quad.up()) / Math.max(MIN_SIZE, quad.height());
+            if (u < 0 || u > 1 || v < 0 || v > 1) {
+                continue;
+            }
+            best = new Hit(state.screenId(), u, v);
+            bestDistance = distance;
+        }
+        return best;
+    }
+
     /**
      * 准星命中的浏览器屏（交互用）：射线与屏幕 AABB 相交，取最近的一个。
      *

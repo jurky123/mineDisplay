@@ -45,12 +45,12 @@ tools/build_client_kit.sh  # 生成玩家客户端安装包（只含本插件；
 1. 把 PNG/JPEG 放到 `plugins/MineDisplay/media/incoming/`，游戏内 `/minedisplay media import <id> <文件>`。
 2. `/minedisplay create <id> <宽tiles> <高tiles> <media-id>` 后右键墙面左上角放置。
 3. `/minedisplay set <id> <media-id>` 换图（复用自身 map ID）；`/minedisplay glow <id>` 转发光画框。
-4. 真浏览器屏：`/minedisplay browser allow <host>` 加白名单 →
+4. 真浏览器屏：`/minedisplay browser allow <host>` 加导航白名单 →
    `/minedisplay browser open <id> <url>` 开屏 →
-   瞄准墙面执行 `/minedisplay browser place <id> [宽] [高]` 摆到世界里
-   （客户端需 client kit + Rinku；右键屏幕/F8 打开操作层；
-   公网玩家需 `browser.public-url` 并把 `browser.bind-address` 改 `0.0.0.0`，
-   同时放行代理端口）。
+   瞄准墙面执行 `/minedisplay browser place <id> [宽] [高]` 摆到世界里。
+   世界中瞄准屏幕左/右键=网页点击，F8=操作层；页面子资源/外链都经服务端代理。
+   （客户端需 client kit + Rinku；公网玩家需 `browser.public-url` 并把
+   `browser.bind-address` 改 `0.0.0.0`，同时放行代理端口。）
 
 目标环境沿用相邻项目：Java 25、Paper 26.2（`26.2.build.124-stable`）、Fabric 26.2。
 独立仓库：[jurky123/mineDisplay](https://github.com/jurky123/mineDisplay)。
