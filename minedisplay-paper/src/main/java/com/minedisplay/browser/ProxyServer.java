@@ -65,9 +65,11 @@ public final class ProxyServer {
         java.net.InetSocketAddress address = bind.equals("0.0.0.0") || bind.equals("::")
                 ? new java.net.InetSocketAddress(configured)
                 : new java.net.InetSocketAddress(bind, configured);
+        // 上游连接池：页面子资源很多，保持 keep-alive 与足够并发（默认池只有 5 条）。
+        System.setProperty("http.maxConnections", "16");
         server = HttpServer.create(address, 0);
         server.createContext("/display/", this::handle);
-        server.setExecutor(Executors.newFixedThreadPool(4, runnable -> {
+        server.setExecutor(Executors.newFixedThreadPool(8, runnable -> {
             Thread thread = new Thread(runnable, "MineDisplay-Proxy");
             thread.setDaemon(true);
             return thread;
@@ -252,6 +254,12 @@ public final class ProxyServer {
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
                             + " Chrome/151.0.0.0 Safari/537.36 MineDisplay/1.0");
             connection.setRequestProperty("Accept", "*/*");
+            // 透传浏览器的 Accept-Encoding：上游压缩后的字节原样回给 CEF（它自己解压），
+            // 跨境链路上 HTML/CSS/JS 能省 5~10 倍字节。
+            String acceptEncoding = exchange.getRequestHeaders().getFirst("Accept-Encoding");
+            if (acceptEncoding != null && !acceptEncoding.isBlank()) {
+                connection.setRequestProperty("Accept-Encoding", acceptEncoding);
+            }
             int status = connection.getResponseCode();
             if (status >= 300 && status < 400) {
                 String location = connection.getHeaderField("Location");
@@ -263,28 +271,36 @@ public final class ProxyServer {
                 current = current.resolve(location);
                 continue;
             }
-            if (status != 200) {
+            if (status < 200 || status >= 300) {
                 connection.disconnect();
                 sendStatus(exchange, 502);
                 return;
             }
             String contentType = connection.getHeaderField("Content-Type");
-            try (InputStream in = connection.getInputStream()) {
-                byte[] body = readLimited(in, MAX_BODY_BYTES);
-                exchange.getResponseHeaders().set("Content-Type",
-                        contentType == null ? "application/octet-stream" : contentType);
-                // 告诉客户端最终取回的 URL（重定向后的），用于页面相对路径解析。
-                exchange.getResponseHeaders().set("X-MineDisplay-Upstream", current.toASCIIString());
-                boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
-                exchange.sendResponseHeaders(200, head ? -1 : body.length);
-                if (!head) {
-                    try (OutputStream out = exchange.getResponseBody()) {
-                        out.write(body);
+            String contentEncoding = connection.getHeaderField("Content-Encoding");
+            try {
+                try (InputStream in = connection.getInputStream()) {
+                    byte[] body = readLimited(in, MAX_BODY_BYTES);
+                    exchange.getResponseHeaders().set("Content-Type",
+                            contentType == null ? "application/octet-stream" : contentType);
+                    if (contentEncoding != null && !contentEncoding.isBlank()) {
+                        exchange.getResponseHeaders().set("Content-Encoding", contentEncoding);
+                    }
+                    // 告诉客户端最终取回的 URL（重定向后的），用于页面相对路径解析。
+                    exchange.getResponseHeaders().set("X-MineDisplay-Upstream", current.toASCIIString());
+                    boolean head = "HEAD".equalsIgnoreCase(exchange.getRequestMethod());
+                    exchange.sendResponseHeaders(200, head ? -1 : body.length);
+                    if (!head) {
+                        try (OutputStream out = exchange.getResponseBody()) {
+                            out.write(body);
+                        }
                     }
                 }
-            } finally {
+            } catch (IOException e) {
                 connection.disconnect();
+                throw e;
             }
+            // 注意：不要 disconnect——连接回 keep-alive 池，后续子资源省掉 TCP/TLS 握手。
             return;
         }
         sendStatus(exchange, 502);
