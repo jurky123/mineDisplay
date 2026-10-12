@@ -121,3 +121,9 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
      一次失败会封死本进程的重试，必须重启）。
 - Rinku 升级会导致 `<tag>` 变化：需要把新 tag 的全平台六件套重新同步到
   `data/webui/rinku-jcef/<tag>/` 并校验 sha256（见 rinkujcef 运维备注）。
+- 排障：日志里 `Rinku-Downloader` 线程 `NoSuchMethodError:
+  ...BoundedInputStream.builder()` 并在解压阶段卡死 = 客户端有 mod 内嵌了旧
+  commons-io（<2.16）盖掉了 MC 26.2 自带的 2.20.0。升级/移除该 mod 的内嵌
+  （MineAudio 客户端已在 0.5.6 把内嵌版本对齐到 2.20.0）。
+- 下载慢：镜像可经 mineAgent `web.rinkuJcefRedirect` 302 到加速源
+  （当前 `ghfast.top`），客户端不用改配置。
