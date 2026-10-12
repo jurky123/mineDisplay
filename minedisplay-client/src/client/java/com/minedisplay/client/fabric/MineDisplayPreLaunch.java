@@ -55,10 +55,8 @@ public class MineDisplayPreLaunch implements PreLaunchEntrypoint {
             }
         }
         String current = properties.getProperty("download-mirror", "").trim();
-        boolean officialOrDefault = current.isEmpty()
-                || current.toLowerCase(Locale.ROOT).contains("github.com");
-        if (!officialOrDefault) {
-            return; // 玩家自定义镜像，不接管
+        if (!current.isEmpty() && !isOfficialGitHub(current)) {
+            return; // 玩家/运维自定义镜像（含 GitHub 加速站），不接管
         }
         String policy = properties.getProperty("download-mirror-policy", "").trim();
         if (current.equals(mirror) && "PREFER_CONFIGURED".equalsIgnoreCase(policy)) {
@@ -71,5 +69,19 @@ public class MineDisplayPreLaunch implements PreLaunchEntrypoint {
             properties.store(out, "written by minedisplay-client rinku mirror bootstrap");
         }
         LOGGER.info("[MineDisplay] Rinku JCEF 下载镜像已配置为 " + mirror);
+    }
+
+    /** 仅 host 为 github.com / *.github.com 才算「官方默认」；加速站路径里也含 github.com，不能误判。 */
+    private static boolean isOfficialGitHub(String value) {
+        try {
+            String host = new java.net.URI(value).getHost();
+            if (host == null) {
+                return false;
+            }
+            host = host.toLowerCase(Locale.ROOT);
+            return host.equals("github.com") || host.endsWith(".github.com");
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
