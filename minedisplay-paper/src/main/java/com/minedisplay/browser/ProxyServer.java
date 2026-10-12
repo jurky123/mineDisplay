@@ -34,6 +34,8 @@ public final class ProxyServer {
 
     /** 响应体上限。 */
     static final long MAX_BODY_BYTES = 8L * 1024 * 1024;
+    /** 请求体上限（POST API 调用都很小）。 */
+    static final long MAX_REQUEST_BYTES = 1L * 1024 * 1024;
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 10_000;
     private static final int MAX_REDIRECTS = 3;
@@ -110,8 +112,10 @@ public final class ProxyServer {
 
     private void handle(HttpExchange exchange) {
         try {
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())
-                    && !"HEAD".equalsIgnoreCase(exchange.getRequestMethod())) {
+            String method = exchange.getRequestMethod();
+            if (!"GET".equalsIgnoreCase(method) && !"HEAD".equalsIgnoreCase(method)
+                    && !"POST".equalsIgnoreCase(method)) {
+                // YouTube 等站点靠 POST 调 API（innertube）：只放行 GET/HEAD/POST。
                 sendStatus(exchange, 405);
                 return;
             }
@@ -228,6 +232,7 @@ public final class ProxyServer {
         // 私网/回环/link-local 对每一跳都拦（防 SSRF），这条与 dest 无关。
         boolean navigation = isNavigationDest(exchange);
         boolean whitelistEnabled = plugin.getConfig().getBoolean("browser.whitelist-enabled", false);
+        boolean hasBody = "POST".equalsIgnoreCase(exchange.getRequestMethod());
         // 每跳重检：host 白名单（导航且启用时）+ DNS 私网拦截。
         URI current = target;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -248,12 +253,41 @@ public final class ProxyServer {
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
             connection.setReadTimeout(READ_TIMEOUT_MS);
             connection.setInstanceFollowRedirects(false);
-            connection.setRequestMethod(exchange.getRequestMethod());
+            // POST 的重定向按浏览器惯例降级为 GET（307 语义严格但罕见，先按 303 处理）。
+            connection.setRequestMethod(hop == 0 ? exchange.getRequestMethod()
+                    : (hasBody ? "GET" : exchange.getRequestMethod()));
             // 真实站点兼容：伪装成正常浏览器 UA（部分站点会按 UA 拦非浏览器请求）。
             connection.setRequestProperty("User-Agent",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
                             + " Chrome/151.0.0.0 Safari/537.36 MineDisplay/1.0");
             connection.setRequestProperty("Accept", "*/*");
+            String requestContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            if (requestContentType != null && !requestContentType.isBlank()) {
+                connection.setRequestProperty("Content-Type", requestContentType);
+            }
+            String acceptLanguage = exchange.getRequestHeaders().getFirst("Accept-Language");
+            if (acceptLanguage != null && !acceptLanguage.isBlank()) {
+                connection.setRequestProperty("Accept-Language", acceptLanguage);
+            }
+            // 透传自定义 X-* 头（YouTube innertube 的 X-Youtube-Client-* 等 API 头）。
+            for (Map.Entry<String, List<String>> header : exchange.getRequestHeaders().entrySet()) {
+                String name = header.getKey();
+                if (name == null || !name.regionMatches(true, 0, "X-", 0, 2)
+                        || name.equalsIgnoreCase("X-MineDisplay-Upstream")) {
+                    continue;
+                }
+                List<String> values = header.getValue();
+                if (values != null && !values.isEmpty()) {
+                    connection.setRequestProperty(name, values.get(0));
+                }
+            }
+            if (hop == 0 && hasBody) {
+                connection.setDoOutput(true);
+                try (InputStream in = exchange.getRequestBody();
+                        OutputStream out = connection.getOutputStream()) {
+                    streamLimited(in, out, MAX_REQUEST_BYTES);
+                }
+            }
             // 透传浏览器的 Accept-Encoding：上游压缩后的字节原样回给 CEF（它自己解压），
             // 跨境链路上 HTML/CSS/JS 能省 5~10 倍字节。
             String acceptEncoding = exchange.getRequestHeaders().getFirst("Accept-Encoding");
@@ -389,7 +423,7 @@ public final class ProxyServer {
         String reason = switch (status) {
             case 403 -> "目标不在导航白名单，或指向内网地址（被安全策略拒绝）。";
             case 404 -> "屏幕令牌无效/过期，或资源路径不合法。";
-            case 405 -> "只允许 GET/HEAD。";
+            case 405 -> "只允许 GET/HEAD/POST。";
             case 502 -> "取回失败：目标站连不上或超时。";
             default -> "请求失败（" + status + "）。";
         };

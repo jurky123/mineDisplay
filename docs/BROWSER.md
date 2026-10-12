@@ -94,6 +94,9 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
   （只剩单机/开发用；无 TLS）。
 - 代理透传 `Range`/`206`/`Content-Range` 并流式回传（`<video>` 分段播放、
   大文件首字节更快），`Accept-Encoding`/`Content-Encoding` 透传（跨境省流量）。
+- 方法：`GET/HEAD/POST`（站点 API 多为 POST，如 YouTube innertube；请求体上限
+  1 MiB）；透传 `Content-Type`/`Accept-Language`/自定义 `X-*` 头；POST 重定向按
+  浏览器惯例降级为 GET。
 
 ## 7. MVP 验收
 
