@@ -85,8 +85,9 @@ public final class ProtocolCodec {
         if (action.kind() == null || action.kind().isBlank()) {
             throw new ProtocolException("ACTION missing kind");
         }
-        // 玩家请求只能引用服务端已有 ID，不允许指定任意 URL/路径。
-        if (action.url() != null && !action.url().isBlank()) {
+        // 玩家请求只能引用服务端已有 ID；navigate（管理员改屏网址）才允许带 URL，
+        // 且服务端会再做权限、白名单与私网校验。
+        if (action.url() != null && !action.url().isBlank() && !"navigate".equals(action.kind())) {
             throw new ProtocolException("ACTION must not carry url");
         }
     }

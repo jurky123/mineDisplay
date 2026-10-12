@@ -53,6 +53,27 @@ public final class BrowserRequestInterceptor {
             }
             client.getHandle().addRequestHandler(new CefRequestHandlerAdapter() {
                 @Override
+                public boolean onBeforeBrowse(CefBrowser browser, CefFrame frame, CefRequest request,
+                                              boolean userGesture, boolean isRedirect) {
+                    // 导航（点链接/redirect）必须在这里拦：资源层的 setURL 改不动主框架导航，
+                    // 不拦的话客户端会直接去连目标站（国内直连 google/youtube 这种必挂）。
+                    try {
+                        Context ctx = CONTEXTS.get(browser);
+                        if (ctx != null && frame != null) {
+                            String url = request.getURL();
+                            String rewritten = rewrite(ctx, frame, url);
+                            if (rewritten != null && !rewritten.equals(url)) {
+                                frame.loadURL(rewritten);
+                                return true; // 取消原导航
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // 出错就放行原导航（最多直连）
+                    }
+                    return false;
+                }
+
+                @Override
                 public CefResourceRequestHandler getResourceRequestHandler(CefBrowser browser, CefFrame frame,
                         CefRequest request, boolean isNavigation, boolean isDownload,
                         String requestInitiator, BoolRef disableDefaultHandling) {
@@ -75,6 +96,12 @@ public final class BrowserRequestInterceptor {
 
     public static void unregister(RinkuBrowser browser) {
         CONTEXTS.remove(browser);
+    }
+
+    /** 当前主文档的真实 URL（地址栏显示用）；未知返回 null。 */
+    public static String upstreamOf(CefBrowser browser) {
+        Context ctx = CONTEXTS.get(browser);
+        return ctx == null ? null : ctx.upstream;
     }
 
     // ---------- 拦截实现 ----------

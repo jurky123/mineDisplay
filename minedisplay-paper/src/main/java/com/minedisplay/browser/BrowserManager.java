@@ -323,6 +323,32 @@ public final class BrowserManager {
                         + (action.message() == null ? "" : "：" + action.message())
                         + "（玩家 " + player.getName() + "）");
             }
+            case "navigate" -> {
+                // 游戏内操作层地址栏：管理员可用（服务端 open 会重校验白名单/私网）。
+                if (!player.hasPermission("minedisplay.admin")) {
+                    player.sendMessage("§c没有权限修改浏览器屏网址");
+                    return;
+                }
+                String url = action.url() == null ? "" : action.url().trim();
+                if (url.isBlank()) {
+                    return;
+                }
+                String error = open(screen.id(), url, screen.title());
+                if (error != null) {
+                    player.sendMessage("§c跳转失败：" + error);
+                }
+            }
+            case "nav" -> {
+                if (!player.hasPermission("minedisplay.admin")) {
+                    return;
+                }
+                if ("reload".equals(action.message())) {
+                    String error = open(screen.id(), screen.url(), screen.title());
+                    if (error != null) {
+                        player.sendMessage("§c刷新失败：" + error);
+                    }
+                }
+            }
             case "click", "wheel", "key", "char" -> {
                 // MVP：距离/世界校验从简——只要求玩家在线且屏存在；
                 // 真射线/朝向校验在世界 quad 落定后补（Client 骨架验收项）。

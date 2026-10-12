@@ -31,8 +31,6 @@ public final class BrowserOverlayScreen extends Screen {
     private final String screenId;
     private EditBox urlBox;
     private Button closeButton;
-    private Button backButton;
-    private Button forwardButton;
     private Button reloadButton;
     private String statusText = "";
 
@@ -52,28 +50,30 @@ public final class BrowserOverlayScreen extends Screen {
     @Override
     protected void init() {
         BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
-        String url = state == null ? "" : state.proxyUrl();
-        urlBox = new EditBox(font, 34, 4, Math.max(100, width - 320), 20, Component.literal("地址"));
+        String url = displayUrl(state);
+        urlBox = new EditBox(font, 34, 4, Math.max(100, width - 300), 20, Component.literal("地址"));
         urlBox.setValue(url);
-        urlBox.setResponder(value -> {
-            // 输入即本地过滤：只允许回环代理形状，回车才发送
-        });
         addRenderableWidget(urlBox);
 
-        backButton = Button.builder(Component.literal("◀"), button -> navigateBack())
-                .bounds(4, 4, 24, 20).build();
-        addRenderableWidget(backButton);
         reloadButton = Button.builder(Component.literal("⟳"), button -> navigateReload())
-                .bounds(width - 280, 4, 24, 20).build();
+                .bounds(width - 260, 4, 24, 20).build();
         addRenderableWidget(reloadButton);
-        forwardButton = Button.builder(Component.literal("▶"), button -> navigateForward())
-                .bounds(width - 252, 4, 24, 20).build();
-        addRenderableWidget(forwardButton);
         closeButton = Button.builder(Component.literal("关闭(Esc)"), button -> onClose())
-                .bounds(width - 224, 4, 90, 20).build();
+                .bounds(width - 230, 4, 90, 20).build();
         addRenderableWidget(closeButton);
 
         resizeBrowserToView();
+    }
+
+    /** 地址栏显示真实 URL（跟随页面内跳转），拿不到时退回代理 URL。 */
+    private String displayUrl(BrowserClient.ScreenState state) {
+        if (state != null && state.view() != null) {
+            String upstream = state.view().upstreamUrl();
+            if (upstream != null && !upstream.isBlank()) {
+                return upstream;
+            }
+        }
+        return state == null ? "" : state.proxyUrl();
     }
 
     /** 视图区（导航栏下方、状态栏上方）。 */
@@ -113,6 +113,13 @@ public final class BrowserOverlayScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         BrowserClient.ScreenState state = BrowserClient.get().screens().get(screenId);
+        // 地址栏跟随页面内跳转（用户正在输入时不覆盖）。
+        if (urlBox != null && !urlBox.isFocused() && state != null && state.view() != null) {
+            String display = displayUrl(state);
+            if (display != null && !display.isBlank() && !display.equals(urlBox.getValue())) {
+                urlBox.setValue(display);
+            }
+        }
         if (state == null || state.view() == null) {
             graphics.text(font, "屏幕已关闭", width / 2 - 30, height / 2, 0xFFFF6666, true);
             return;
@@ -205,21 +212,21 @@ public final class BrowserOverlayScreen extends Screen {
         if (value.isBlank()) {
             return;
         }
-        // 客户端只做形状预检：真正白名单/DNS 由服务端重校验。
+        if (!value.matches("(?i)^https?://.*")) {
+            value = "https://" + value;
+        }
+        if (value.length() > 2048) {
+            setStatus("网址太长");
+            return;
+        }
+        // 客户端只做形状预检：真正白名单/私网由服务端 open 重校验（限管理员）。
         BrowserClient.get().action(screenId, "navigate", value, 0, 0, 0, 0, null);
         setStatus("已请求跳转（等服务端确认）…");
     }
 
-    private void navigateBack() {
-        BrowserClient.get().action(screenId, "nav", null, 0, 0, 0, 0, "back");
-    }
-
-    private void navigateForward() {
-        BrowserClient.get().action(screenId, "nav", null, 0, 0, 0, 0, "forward");
-    }
-
     private void navigateReload() {
         BrowserClient.get().action(screenId, "nav", null, 0, 0, 0, 0, "reload");
+        setStatus("已请求刷新…");
     }
 
     @Override

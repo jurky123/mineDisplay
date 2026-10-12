@@ -51,9 +51,9 @@ public final class Packets {
     }
 
     /**
-     * C→S 动作：只引用 screenId，不带 URL。
+     * C→S 动作：只引用 screenId；仅 navigate 可带 URL（管理员改屏网址）。
      * kind: ready / error / click / wheel / key / char（keyCode 位携带码点）/
-     * navigate(协议位已留，服务端未实现)
+     * navigate（url 字段，服务端重校验） / nav（message: reload）
      */
     public record Action(
             String screenId,

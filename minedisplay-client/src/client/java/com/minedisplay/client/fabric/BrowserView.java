@@ -37,6 +37,15 @@ public final class BrowserView {
         return viewportHeight;
     }
 
+    /** 当前页面的真实 URL（跟随页面内跳转变化）；未知返回 null。 */
+    public String upstreamUrl() {
+        try {
+            return BrowserRequestInterceptor.upstreamOf(browser);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /**
      * 打开代理 URL，失败抛 OpenFailure。必须在渲染线程调用
      *（Rinku.createBrowser 内部非渲染线程会 submit 回主线程再 join，
