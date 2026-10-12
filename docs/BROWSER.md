@@ -38,8 +38,11 @@ Paper BrowserManager ──UPSERT/REMOVE──▶ Fabric Client (Rinku)
 
 1. 管理员 `browser open <screen-id> <url>`：Paper 校验 host 白名单 → 建会话
    （UUID 令牌，TTL 默认 30 分钟，单屏单令牌）→ 发 UPSERT（代理 URL + 几何）。
-2. 客户端收到 UPSERT：`Rinku.createBrowser(proxyUrl)` → 世界渲染（方块姿态 quad，
-   MVP 用 DisplayManager 的屏幕几何）→ READY 回传。
+2. 管理员瞄准墙面 `browser place <screen-id> [宽] [高]`：贴面摆放（八格内命中面，
+   朝外偏 1cm 防 z-fighting），几何持久化进 browser.yml，revision+1 重发 UPSERT。
+3. 客户端收到 UPSERT：`Rinku.createBrowser(proxyUrl)`（URL 未变则复用实例、只调
+   分辨率）→ `COLLECT_SUBMITS` 阶段把纹理画成世界里的 quad（距离/视锥裁剪，
+   单屏 64 格内可见）→ ready 回传。没装 mod 的玩家看不到（地图封面后续接）。
 3. 客户端把代理 URL 告诉 Rinku 后，Rinku 内核的网络请求全部打到服务端代理端口；
    代理按令牌找到目标 host，校验白名单后转发（只 GET/HEAD，大小上限，超时熔断）。
 4. 玩家对屏幕的点击/滚轮/键盘 → ACTION 包 → Paper 校验权限/距离/朝向 →
@@ -91,6 +94,7 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
 
 - 白名单外 host 被拒；与下发基址不匹配的 URL 客户端拒收；token 吊销后代理 404。
 - 一块浏览器屏：打开→显示网页→点击翻页→关屏释放纹理（无泄漏）。
+- 世界内可见：`browser place` 后墙面出现屏；跨维度不串屏；远离/视锥外不渲染。
 - 公网玩家：客户端能从 `public-url` 基址取到内容（腾讯云放行 TCP 8768）。
 - Rinku 内核下载失败不丢屏：聊天给出原因，修好（镜像）后 F8 重试/重启游戏即恢复。
 - 无 mod 玩家：地图封面 + 聊天提示，不崩。
@@ -102,8 +106,12 @@ minedisplay-client/      # Fabric：Rinku 渲染 + 输入回传 + 世界 quad
   目前由 CEF 直接加载，尚不经过服务端代理，也不受白名单约束。
   简单页面（如 example.com）可正常显示；重资源站点会缺图/缺样式。
   下一步：用 CEF 请求拦截把所有子请求重写回代理路径（需评估 Rinku 暴露面）。
+- 世界里的屏：右键/F8 打开操作覆盖层才能完整交互（输入要抓键鼠）；
+  直接对着屏幕鼠标点击/指哪点哪后续做；屏幕背面也能看到镜像画面（单面绘制后续做）。
+- 没装 mod 的玩家看不到浏览器屏（M1 地图封面墙作为可选降级，未自动生成）。
+- 每个浏览器能力客户端进服即创建全部屏的 CEF 实例（与距离无关），
+  屏数量多时要改成按距离懒创建/释放。
 - 输入回传 MVP 只做点击/滚轮/键盘；地址栏跳转（navigate）协议位已留，服务端未实现。
-- 屏幕几何/世界 quad 未落地：现在覆盖层（F8）先行，世界里摆屏后续做。
 
 ## 9. 客户端前置：Rinku 与 JCEF 内核镜像
 

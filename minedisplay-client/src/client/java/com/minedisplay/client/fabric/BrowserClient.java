@@ -22,14 +22,24 @@ import net.minecraft.client.Minecraft;
  * （防服务端被攻破后下发恶意外链）。
  *
  * <p>Rinku 不可用时屏不丢弃：保留待建状态（error 文案），F8 可重试创建。
+ * 摆屏（world 非空）后由 {@link BrowserWorldRenderer} 在世界里渲染。
  */
 public final class BrowserClient {
 
-    /** 屏幕状态（内存，不持久化）；view 为空时 error 说明原因（待建，可重试）。 */
-    public record ScreenState(String screenId, int revision, String proxyUrl,
-                              String title, BrowserView view, String error) {
+    /**
+     * 屏幕状态（内存，不持久化）。
+     *
+     * <p>view 为空时 error 说明原因（待建，可重试）；world 为空表示还没摆到世界里。
+     */
+    public record ScreenState(String screenId, int revision, String proxyUrl, String title,
+                              String world, double x, double y, double z, String facing,
+                              double width, double height, BrowserView view, String error) {
         public boolean ready() {
             return view != null;
+        }
+
+        public boolean placed() {
+            return world != null && !world.isBlank() && width > 0 && height > 0;
         }
     }
 
@@ -148,22 +158,32 @@ public final class BrowserClient {
         if (old != null && envelope.revision() <= old.revision()) {
             return; // 过期丢弃
         }
-        if (old != null) {
+        // URL 没变（例如只是摆屏改几何）时保留现有浏览器实例，不重载页面。
+        boolean sameUrl = old != null && upsert.url().equals(old.proxyUrl());
+        BrowserView view = sameUrl ? old.view() : null;
+        if (old != null && old.view() != null && !sameUrl) {
             closeView(old);
         }
-        BrowserView view = null;
         String error = null;
-        if (!rinkuAvailable) {
-            error = "未安装 Rinku mod（浏览器屏需要 Rinku；安装后重启游戏）";
-        } else {
-            try {
-                view = BrowserView.open(upsert.url());
-            } catch (BrowserView.OpenFailure failure) {
-                error = failure.getMessage();
+        if (view == null) {
+            if (!rinkuAvailable) {
+                error = "未安装 Rinku mod（浏览器屏需要 Rinku；安装后重启游戏）";
+            } else {
+                try {
+                    int[] size = desiredResolution(upsert.width(), upsert.height());
+                    view = BrowserView.open(upsert.url(), size[0], size[1]);
+                } catch (BrowserView.OpenFailure failure) {
+                    error = failure.getMessage();
+                }
             }
+        } else {
+            // 复用实例：几何变了就把浏览器分辨率同步到新宽高比。
+            int[] size = desiredResolution(upsert.width(), upsert.height());
+            view.resize(size[0], size[1]);
         }
         screens.put(upsert.screenId(), new ScreenState(upsert.screenId(), envelope.revision(),
-                upsert.url(), upsert.title(), view, error));
+                upsert.url(), upsert.title(), upsert.world(), upsert.x(), upsert.y(), upsert.z(),
+                upsert.facing(), upsert.width(), upsert.height(), view, error));
         BrowserOverlayScreens.noteScreen(upsert.screenId(), old == null);
         action(upsert.screenId(), view != null ? "ready" : "error", null, 0, 0, 0, 0, error);
     }
@@ -190,15 +210,18 @@ public final class BrowserClient {
         }
         BrowserView view;
         try {
-            view = BrowserView.open(old.proxyUrl());
+            int[] size = desiredResolution(old.width(), old.height());
+            view = BrowserView.open(old.proxyUrl(), size[0], size[1]);
         } catch (BrowserView.OpenFailure failure) {
             String error = failure.getMessage();
             screens.put(screenId, new ScreenState(old.screenId(), old.revision(), old.proxyUrl(),
-                    old.title(), null, error));
+                    old.title(), old.world(), old.x(), old.y(), old.z(), old.facing(),
+                    old.width(), old.height(), null, error));
             return error;
         }
         screens.put(screenId, new ScreenState(old.screenId(), old.revision(), old.proxyUrl(),
-                old.title(), view, null));
+                old.title(), old.world(), old.x(), old.y(), old.z(), old.facing(),
+                old.width(), old.height(), view, null));
         action(screenId, "ready", null, 0, 0, 0, 0, null);
         return null;
     }
@@ -229,6 +252,17 @@ public final class BrowserClient {
             return;
         }
         state.view().applyInput(input);
+    }
+
+    /** 世界渲染用的期望分辨率：按屏幕宽高比给，无几何时 1280×720。 */
+    static int[] desiredResolution(double width, double height) {
+        if (width <= 0 || height <= 0) {
+            return new int[]{1280, 720};
+        }
+        double scale = Math.min(256.0, Math.min(1920.0 / width, 1080.0 / height));
+        int px = (int) Math.round(width * scale);
+        int py = (int) Math.round(height * scale);
+        return new int[]{Math.max(64, px), Math.max(64, py)};
     }
 
     private static void closeView(ScreenState state) {

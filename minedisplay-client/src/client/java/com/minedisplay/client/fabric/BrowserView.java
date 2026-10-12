@@ -31,15 +31,18 @@ public final class BrowserView {
      * 打开代理 URL，失败抛 OpenFailure。必须在渲染线程调用
      *（Rinku.createBrowser 内部非渲染线程会 submit 回主线程再 join，
      * 但调用方仍保证渲染线程，避免死锁）。
+     *
+     * @param pixelWidth  浏览器渲染分辨率（按屏幕宽高比，见 BrowserClient.desiredResolution）
+     * @param pixelHeight 同上
      */
-    public static BrowserView open(String url) throws OpenFailure {
+    public static BrowserView open(String url, int pixelWidth, int pixelHeight) throws OpenFailure {
         try {
             if (!Rinku.isInitialized() && !Rinku.initialize()) {
                 throw new OpenFailure("Rinku/CEF 初始化失败（JCEF 内核未就绪：多为下载失败，"
                         + "检查网络/镜像配置后重启游戏）");
             }
-            // 浏览器分辨率：MVP 固定 1280x720，后续按屏幕宽高比与服务端 width/height 派生。
-            RinkuBrowser browser = Rinku.createBrowser(url, false, 1280, 720);
+            RinkuBrowser browser = Rinku.createBrowser(url, false,
+                    Math.max(64, pixelWidth), Math.max(64, pixelHeight));
             if (browser == null) {
                 throw new OpenFailure("创建浏览器失败（Rinku 返回空）");
             }

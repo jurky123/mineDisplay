@@ -172,6 +172,53 @@ public final class BrowserManager {
         return null;
     }
 
+    /**
+     * 管理员摆屏：把屏贴到瞄准的墙面（八格内），世界里随之渲染。
+     *
+     * <p>贴面位置取准星命中点，朝外偏 1cm 防 z-fighting；朝向取命中面的法线方向
+     *（屏幕正面朝向玩家）。宽高不填则沿用原值（默认 3×2）。
+     *
+     * @return 失败原因，成功返回 null
+     */
+    public String place(Player player, String id, Double width, Double height) {
+        BrowserScreen screen = find(id);
+        if (screen == null) {
+            return "没有该浏览器屏";
+        }
+        var hit = player.rayTraceBlocks(8, org.bukkit.FluidCollisionMode.NEVER);
+        if (hit == null || hit.getHitBlockFace() == null || hit.getHitPosition() == null) {
+            return "请瞄准 8 格内的墙面（能看到方块侧面）";
+        }
+        org.bukkit.block.BlockFace face = hit.getHitBlockFace();
+        if (face == org.bukkit.block.BlockFace.UP || face == org.bukkit.block.BlockFace.DOWN
+                || face == org.bukkit.block.BlockFace.SELF) {
+            return "请瞄准墙面（侧面），不要对着地板/天花板";
+        }
+        double w = clampSize(width != null ? width : screen.width());
+        double h = clampSize(height != null ? height : screen.height());
+        org.bukkit.util.Vector normal = face.getDirection();
+        org.bukkit.util.Vector pos = hit.getHitPosition().add(normal.multiply(0.01));
+        BrowserScreen placed = new BrowserScreen(screen.uuid(), screen.id(), screen.url(), screen.title(),
+                player.getWorld().getKey().toString(),
+                pos.getX(), pos.getY(), pos.getZ(),
+                face.name(), w, h, screen.revision() + 1, screen.token());
+        screens.put(screen.id().toLowerCase(Locale.ROOT), placed);
+        save();
+        plugin.getLogger().info("浏览器摆屏 " + screen.id() + " " + w + "x" + h + " " + face.name()
+                + " @ " + placed.world() + " " + fmt(pos.getX()) + "," + fmt(pos.getY()) + "," + fmt(pos.getZ())
+                + "（revision " + placed.revision() + "）");
+        broadcastUpsert(placed, ProxyUrl.buildFromBase(baseUrl(), placed.token()));
+        return null;
+    }
+
+    private static double clampSize(double v) {
+        return Math.max(0.5, Math.min(16.0, v));
+    }
+
+    private static String fmt(double v) {
+        return String.format(Locale.ROOT, "%.2f", v);
+    }
+
     /** 白名单管理。 */
     public String allow(String host) {
         if (host == null || host.isBlank() || host.contains("/") || host.contains(":")) {
@@ -272,6 +319,14 @@ public final class BrowserManager {
             config.set(base + ".id", screen.id());
             config.set(base + ".url", screen.url());
             config.set(base + ".title", screen.title());
+            // 世界几何（摆屏）：空 world 表示还没摆到世界里。
+            config.set(base + ".world", screen.world());
+            config.set(base + ".x", screen.x());
+            config.set(base + ".y", screen.y());
+            config.set(base + ".z", screen.z());
+            config.set(base + ".facing", screen.facing());
+            config.set(base + ".width", screen.width());
+            config.set(base + ".height", screen.height());
         }
         try {
             File file = new File(plugin.getDataFolder(), "browser.yml");
@@ -313,8 +368,15 @@ public final class BrowserManager {
                 }
                 long ttlMs = plugin.getConfig().getLong("browser.session-ttl-minutes", 30) * 60 * 1000;
                 String token = proxy.issue(idKey, url, ttlMs);
+                String facing = entry.getString("facing", "NORTH").toUpperCase(Locale.ROOT);
+                if (!List.of("NORTH", "SOUTH", "EAST", "WEST").contains(facing)) {
+                    facing = "NORTH";
+                }
                 screens.put(idKey.toLowerCase(Locale.ROOT), new BrowserScreen(uuid, entry.getString("id", idKey),
-                        url, entry.getString("title", ""), "", 0, 0, 0, "NORTH", 3, 2, 1, token));
+                        url, entry.getString("title", ""), entry.getString("world", ""),
+                        entry.getDouble("x", 0), entry.getDouble("y", 0), entry.getDouble("z", 0),
+                        facing, clampSize(entry.getDouble("width", 3)), clampSize(entry.getDouble("height", 2)),
+                        1, token));
             } catch (Exception e) {
                 plugin.getLogger().log(Level.WARNING, "跳过损坏的浏览器屏记录: " + idKey, e);
             }

@@ -40,6 +40,7 @@ public class MineDisplayFabricClient implements ClientModInitializer {
                 client.execute(BrowserClient.get()::onDisconnect));
 
         BrowserOverlayScreens.initHud();
+        BrowserWorldRenderer.init();
 
         // F8：打开/关闭浏览器覆盖层（原版按键设置可改键）
         openBrowserKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
@@ -47,6 +48,16 @@ public class MineDisplayFabricClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (openBrowserKey.consumeClick()) {
                 BrowserOverlayScreens.toggle();
+            }
+        });
+        // 右键瞄准世界里的屏幕：打开该屏的操作覆盖层（别的时候不拦截，不影响放方块）。
+        ClientTickEvents.START_CLIENT_TICK.register(client -> {
+            if (client.player == null || client.level == null || client.gui.screen() != null) {
+                return;
+            }
+            String aimed = BrowserWorldRenderer.aimedScreenId(client, 8.0);
+            if (aimed != null && client.options.keyUse.consumeClick()) {
+                BrowserOverlayScreens.open(aimed);
             }
         });
         // HUD 胶囊点击：无界面且点中胶囊时打开覆盖层（屏蔽后续传递）。

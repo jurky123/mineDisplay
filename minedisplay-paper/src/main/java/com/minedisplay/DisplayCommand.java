@@ -21,7 +21,7 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
     private static final List<String> ROOTS = List.of("media", "create", "set", "glow", "remove",
             "list", "info", "status", "reload", "browser");
     private static final List<String> MEDIA_ACTIONS = List.of("import", "list", "info");
-    private static final List<String> BROWSER_ACTIONS = List.of("open", "close", "list", "allow", "unallow");
+    private static final List<String> BROWSER_ACTIONS = List.of("open", "close", "place", "list", "allow", "unallow");
 
     private final MineDisplayPlugin plugin;
 
@@ -278,7 +278,7 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (args.length < 2) {
-            sender.sendMessage("§e用法: /minedisplay browser <open|close|list|allow|unallow> ...");
+            sender.sendMessage("§e用法: /minedisplay browser <open|close|place|list|allow|unallow> ...");
             return;
         }
         switch (args[1].toLowerCase(Locale.ROOT)) {
@@ -299,6 +299,32 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
                 String error = plugin.browser().close(args[2]);
                 sender.sendMessage(error == null ? "§a浏览器屏已关闭" : "§c" + error);
             }
+            case "place" -> {
+                if (!(sender instanceof Player player)) {
+                    sender.sendMessage("§c该命令只能玩家执行（要瞄准摆屏的墙面）");
+                    return;
+                }
+                if (args.length < 3) {
+                    sender.sendMessage("§e用法: /minedisplay browser place <screen-id> [宽] [高]（瞄准墙面执行）");
+                    return;
+                }
+                Double width = null;
+                Double height = null;
+                try {
+                    if (args.length >= 4) {
+                        width = Double.parseDouble(args[3]);
+                    }
+                    if (args.length >= 5) {
+                        height = Double.parseDouble(args[4]);
+                    }
+                } catch (NumberFormatException e) {
+                    sender.sendMessage("§c宽高要是数字（单位：方块）");
+                    return;
+                }
+                String error = plugin.browser().place(player, args[2], width, height);
+                sender.sendMessage(error == null
+                        ? "§a屏幕已摆到墙面（客户端世界里可见；右键屏幕可操作）" : "§c" + error);
+            }
             case "list" -> {
                 var all = plugin.browser().list();
                 if (all.isEmpty()) {
@@ -307,8 +333,12 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
                 }
                 sender.sendMessage("§6浏览器屏（" + all.size() + "）:");
                 for (var screen : all) {
+                    String placement = screen.world().isBlank()
+                            ? " §8[未放置]"
+                            : " §8[" + trim(screen.width()) + "x" + trim(screen.height())
+                                    + " " + screen.facing() + " @ " + screen.world() + "]";
                     sender.sendMessage("§7- " + screen.id() + " r" + screen.revision()
-                            + " " + hostOf(screen.url()));
+                            + " " + hostOf(screen.url()) + placement);
                 }
             }
             case "allow" -> {
@@ -327,8 +357,12 @@ public final class DisplayCommand implements CommandExecutor, TabCompleter {
                 String error = plugin.browser().unallow(args[2]);
                 sender.sendMessage(error == null ? "§a已移出白名单" : "§c" + error);
             }
-            default -> sender.sendMessage("§e用法: /minedisplay browser <open|close|list|allow|unallow> ...");
+            default -> sender.sendMessage("§e用法: /minedisplay browser <open|close|place|list|allow|unallow> ...");
         }
+    }
+
+    private static String trim(double v) {
+        return String.format(java.util.Locale.ROOT, "%.1f", v);
     }
 
     private static String hostOf(String url) {
